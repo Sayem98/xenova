@@ -1,131 +1,118 @@
-# Block Bids Contracts (`BBACoin`)
+# Dynamic Tax BEP20 Token
 
-An EVM-compatible smart contract ecosystem for the Blockbid platform, targeting PulseChain. This repository contains the core [`BBACoin.sol`](contracts/core/BBACoin.sol) contract — **Blockbid Auction Coin (`BBA`)** — an ERC-20 token with a built-in transaction-tax engine that funds an ecosystem yield vault.
+A BEP20 token for BNB Smart Chain with a fixed buy tax and a sell tax that scales
+with the token's 24-hour price drop. Collected taxes are swapped to USDT and
+forwarded to a tax receiver wallet.
 
-## Ecosystem Overview
+> **Status: planning.** The specification lives in
+> [implementation_plan.md](implementation_plan.md). No contract has been written
+> yet — [contracts/](contracts/) and [test/](test/) are empty. See
+> [Open design questions](#open-design-questions) before starting Phase 1.
 
-Blockbid is a two-token auction economy on PulseChain. Buy → bid → stake → earn:
+## Intended Behaviour
 
-| Token | Role |
+| Item | Value |
 | --- | --- |
-| **BLOCKBIDS (`BID`)** | Native auction token, valued at $1. Spent to place bids; each bid automatically mints **BBA** to the bidder. |
-| **BBA** (Blockbid Auction Coin) | Companion token, tradable on external exchanges and staked in yield farms. **This is the contract in this repo.** |
-| **PLS** (PulseChain) | Staking reward. Stake BBA to earn PLS daily, sourced from the 5% AMM tax that BBA swaps to PLS and routes to the yield vault. |
+| Name / symbol | DemoToken (`DTK`) |
+| Total supply | 100,000,000 |
+| Decimals | 18 |
+| Buy tax | 3% (fixed) |
+| Sell tax | 3% → 60%, based on the 24h price drop |
+| Tax destination | USDT, sent to the configured tax receiver |
 
-**Flow:** buy BID → place bids (mints BBA) → stake BBA → earn PLS every day.
+The sell tax tiers in the plan collapse to a single formula:
 
-> **Supply note:** the intended max supply is **500,000,000**, but `BBACoin` does **not** encode this on-chain — `mint(...)` is `MINTER_ROLE`-gated yet uncapped, and no initial supply is preminted. The 500M ceiling must be enforced by whoever holds `MINTER_ROLE` (the BID/auction contract) or by governance, not by BBA itself. The **BID** token and the staking/farm contracts are separate components and are **not** included in this repository.
+```
+drop <= 5%           → 3%
+drop 6%..17%         → 5 * (drop - 5)     // 6% → 5%, 10% → 25%, 17% → 60%
+drop > 17%           → 60% (capped)
+```
 
-## How the Smart Contract Works
+## On-Chain Addresses (BSC Mainnet, verified)
 
-`BBACoin` is a standard ERC-20 token that automatically captures a fee on automated-market-maker (AMM) trades, converts the accumulated fees to native PLS, and forwards the proceeds to a yield vault — without exposing ordinary user transfers to reverts.
-
-### Core Mechanics
-
-1. **5% AMM Trade Tax:** A flat `5%` (500 bps) fee is taken on buys and sells routed through a registered AMM pair. Plain wallet-to-wallet transfers are **not** taxed.
-2. **Tax Exemptions:** Addresses holding `TAX_EXEMPT_ROLE` (the contract itself, the deployer, the yield vault, and the treasury) trade tax-free. Exemptions rotate automatically when the vault or treasury is reconfigured.
-3. **Automated Fee Liquidation:** Once the contract's accumulated BBA balance reaches `swapTokensAtAmount` (default `10,000 BBA`), a sell trade triggers an internal swap of those tokens to PLS via the PulseX (Uniswap V2) router. The swap is capped to one threshold at a time to limit price impact and MEV risk.
-4. **Yield Routing:** Swapped PLS is delivered directly to the configured `yieldVault`.
-5. **Revert-Safe Swaps:** The router swap is wrapped in `try/catch`. If the pool is illiquid or the router fails, the swap is skipped silently and the user's transfer still completes; the accrued tax carries over to the next trigger.
-6. **Role-Based Supply Control:** `MINTER_ROLE` can mint new supply (e.g. for reward contracts) and `BURNER_ROLE` can perform allowance-gated burns from the treasury, enabling scheduled supply contraction.
-
-For the full functional specification, see [docs/BBAToken-SRS.md](docs/BBAToken-SRS.md).
-
-### Roles
-
-| Role | Purpose |
+| Contract | Address |
 | --- | --- |
-| `DEFAULT_ADMIN_ROLE` | Configures the yield vault, treasury, AMM pairs, and swap threshold. Granted to the deployer. |
-| `MINTER_ROLE` | Authorizes `mint(...)` of new supply. |
-| `BURNER_ROLE` | Authorizes `burnSupply(...)`, an allowance-gated burn from the treasury. |
-| `TAX_EXEMPT_ROLE` | Bypasses the transfer tax. |
+| PancakeSwap V2 Router | `0x10ED43C718714eb63d5aA57B78B54704E256024E` |
+| PancakeSwap V2 Factory | `0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73` |
+| WBNB | `0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c` |
+| USDT | `0x55d398326f99059fF775485246999027B3197955` |
 
-## Prerequisites
+PancakeSwap V2 Router on BSC Testnet is
+`0xD99D1c33F9fC3444f8101754aBC46c52416550D1`.
 
-Ensure you have the following installed:
+> **USDT on BSC has 18 decimals**, not the 6 used on Ethereum. Tests that assume
+> 6 will be wrong by a factor of 10^12.
 
-* [Node.js](https://nodejs.org/) v18 or newer
-* [Yarn](https://yarnpkg.com/)
+## Setup
 
-## Setup & Installation
-
-Install the project dependencies from the repository root:
+Requires Node.js v18+ and Yarn.
 
 ```bash
 yarn install
-```
-
-Copy the sample environment file and fill in your values:
-
-```bash
 cp .env.sample .env
 ```
 
-## Compiling the Contracts
-
-To compile the Solidity source and generate the TypeChain typings used for integration, run:
+## Compile
 
 ```bash
-npx hardhat compile
+yarn compile
 ```
 
-This generates the `artifacts/` and `typechain-types/` directories.
+Generates `artifacts/` and `typechain-types/`.
 
 ## Testing
 
-Run the local test suite ([test/BBACoin.ts](test/BBACoin.ts) covers the tax engine, auto-swap liquidation and its failsafe, role-gated mint/burn, and the admin setters):
-
 ```bash
-npx hardhat test
+yarn test          # local only, no network access needed
+yarn test:fork     # forks BSC mainnet — real router, WBNB, and USDT
 ```
 
-To run the tests and generate a gas consumption report:
+Fork tests are the only ones that exercise the real PancakeSwap pair, and
+therefore the only ones that can catch the fee-on-transfer failure described
+below.
 
-```bash
-REPORT_GAS=true npx hardhat test
+**Fork testing requires a paid archive RPC.** The default
+`https://bsc-dataseed.binance.org` is a pruned full node, not an archive node, so
+forking against it fails immediately:
+
+```
+missing trie node   (eth_getCode at a recent block)
 ```
 
-The suite deploys `BBACoin` against lightweight Uniswap V2 mocks in [contracts/mocks/](contracts/mocks/) (`MockFactory`, `MockRouter`, `MockPair`), so no live network or fork is required.
+Set `BSC_MAINNET_RPC` to an archive endpoint (Alchemy, QuickNode, dRPC paid tier)
+before running `yarn test:fork`. Pin `FORK_BLOCK` to keep runs cached and
+deterministic.
 
 ## Deployment
 
-`BBACoin`'s constructor takes a single argument: the address of the PulseX (Uniswap V2) **router**. At deployment the contract creates its own BBA/WPLS pair via the router's factory and registers it as an AMM pair. After deploying, the admin should call `setYieldVault(...)` and `setTreasuryWallet(...)` before production trading begins.
+Networks `bsc` (chainId 56) and `bscTestnet` (97) are configured in
+[hardhat.config.ts](hardhat.config.ts). Set `DEPLOYER_PRIVATE_KEY` first. A
+deploy script will be added with the contract.
 
-[scripts/deploy.ts](scripts/deploy.ts) reads the router address from the `ROUTER_ADDRESS` environment variable, so set it for the target network before running:
-
-```bash
-export ROUTER_ADDRESS=0x...   # PulseX V2 router for the chosen network
-```
-
-Deploy to PulseChain Testnet (v4):
+Verification uses `BSCSCAN_API_KEY`:
 
 ```bash
-npx hardhat run scripts/deploy.ts --network pulsechainTestnet
+npx hardhat verify --network bscTestnet <ADDRESS> <CONSTRUCTOR_ARGS>
 ```
 
-Deploy to PulseChain Mainnet:
+## Open Design Questions
 
-```bash
-npx hardhat run scripts/deploy.ts --network pulsechainMainnet
-```
+Two items must be resolved before the contract is written.
 
-Sepolia and Ethereum mainnet are also configured in [hardhat.config.ts](hardhat.config.ts) (`--network sepolia` / `--network mainnet`).
+**1. The tax breaks ordinary PancakeSwap sells.** Taking a fee on transfer means
+the pair receives less than the router promised, so `pair.swap()` fails its
+balance check and reverts with `Pancake: K`. Sellers must route through
+`swapExactTokensForTokensSupportingFeeOnTransferTokens`, and set a slippage
+tolerance above the current tax rate. The PancakeSwap UI caps how high that can
+be set, so the top tiers may not be sellable through the normal front end. This
+needs to be confirmed on testnet against the real UI before launch.
 
-## Contract Verification
+**2. The oracle is unspecified.** The plan defers between a wallet-pushed value
+and a TWAP. A pushed value can be front-run in the mempool and freezes at its
+last reading if the updater goes offline; a value read live from pair reserves is
+flash-loan manipulable. Whichever is chosen, the contract must wrap the oracle
+call in `try/catch` and clamp the result, so a failing or malicious oracle cannot
+freeze transfers or return a tax above the cap.
 
-Once deployed, verify the contract source on the block explorer, passing the router address used as the constructor argument:
-
-```bash
-npx hardhat verify --network pulsechainTestnet <DEPLOYED_CONTRACT_ADDRESS> <ROUTER_ADDRESS>
-```
-
-Replace `<DEPLOYED_CONTRACT_ADDRESS>` with the deployed address and `<ROUTER_ADDRESS>` with the PulseX router passed at construction. Use `pulsechainMainnet` (or `sepolia` / `mainnet`) as appropriate.
-
-## Notes
-
-* Networks `pulsechainTestnet` (chainId 943), `pulsechainMainnet` (369), `sepolia` (11155111), and `mainnet` (1) are configured in [hardhat.config.ts](hardhat.config.ts).
-* Set `DEPLOYER_PRIVATE_KEY` and `ROUTER_ADDRESS` in your environment before deploying.
-* Set `PULSE_TESTNET_V4_RPC`, `PULSE_MAINNET_RPC`, `SEPOLIA_RPC`, or `MAINNET_RPC` to override the default RPC endpoints.
-* Set `ETHERSCAN_API_KEY` to enable verification on Etherscan-compatible explorers.
-
-Built with Hardhat, Ethers.js v6, and OpenZeppelin v5.
+Note also that `renounceOwnership()` makes `setOracleAddress` unreachable,
+permanently locking in whatever oracle is configured at that moment.

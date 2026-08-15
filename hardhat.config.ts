@@ -6,6 +6,32 @@ import * as dotenv from "dotenv";
 
 dotenv.config();
 
+const BSC_MAINNET_RPC =
+  process.env.BSC_MAINNET_RPC || "https://bsc-dataseed.binance.org";
+const BSC_TESTNET_RPC =
+  process.env.BSC_TESTNET_RPC ||
+  "https://data-seed-prebsc-1-s1.binance.org:8545";
+
+const accounts = process.env.DEPLOYER_PRIVATE_KEY
+  ? [process.env.DEPLOYER_PRIVATE_KEY]
+  : [];
+
+// Forking is opt-in: `FORK_BSC=true npx hardhat test`. Left off by default so a
+// plain `npx hardhat test` never depends on network access. Pin FORK_BLOCK to
+// keep fork runs cached and deterministic.
+const forking =
+  process.env.FORK_BSC === "true"
+    ? {
+        url: BSC_MAINNET_RPC,
+        blockNumber: process.env.FORK_BLOCK
+          ? Number(process.env.FORK_BLOCK)
+          : undefined,
+      }
+    : undefined;
+
+const bscscanApiKey =
+  process.env.BSCSCAN_API_KEY || process.env.ETHERSCAN_API_KEY || "";
+
 const config: HardhatUserConfig = {
   solidity: {
     version: "0.8.20",
@@ -17,43 +43,28 @@ const config: HardhatUserConfig = {
     },
   },
   networks: {
-    pulsechainTestnet: {
-      url:
-        process.env.PULSE_TESTNET_V4_RPC ||
-        "https://rpc.v4.testnet.pulsechain.com",
-      chainId: 943,
-      accounts: process.env.DEPLOYER_PRIVATE_KEY
-        ? [process.env.DEPLOYER_PRIVATE_KEY]
-        : [],
+    hardhat: {
+      forking,
     },
-    pulsechainMainnet: {
-      url: process.env.PULSE_MAINNET_RPC || "https://rpc.pulsechain.com",
-      chainId: 369,
-      accounts: process.env.DEPLOYER_PRIVATE_KEY
-        ? [process.env.DEPLOYER_PRIVATE_KEY]
-        : [],
+    bscTestnet: {
+      url: BSC_TESTNET_RPC,
+      chainId: 97,
+      accounts,
     },
-    sepolia: {
-      url:
-        process.env.SEPOLIA_RPC ||
-        "https://sepolia.infura.io/v3/YOUR_INFURA_KEY",
-      chainId: 11155111,
-      accounts: process.env.DEPLOYER_PRIVATE_KEY
-        ? [process.env.DEPLOYER_PRIVATE_KEY]
-        : [],
-    },
-    mainnet: {
-      url:
-        process.env.MAINNET_RPC ||
-        "https://mainnet.infura.io/v3/YOUR_INFURA_KEY",
-      chainId: 1,
-      accounts: process.env.DEPLOYER_PRIVATE_KEY
-        ? [process.env.DEPLOYER_PRIVATE_KEY]
-        : [],
+    bsc: {
+      url: BSC_MAINNET_RPC,
+      chainId: 56,
+      accounts,
     },
   },
   etherscan: {
-    apiKey: process.env.ETHERSCAN_API_KEY || "",
+    apiKey: {
+      bsc: bscscanApiKey,
+      bscTestnet: bscscanApiKey,
+    },
+  },
+  gasReporter: {
+    enabled: process.env.REPORT_GAS === "true",
   },
 };
 
