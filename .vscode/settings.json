@@ -3,8 +3,13 @@
     "BEP",
     "Pancake",
     "Pancakeswap",
+    "Chainlink",
+    "dataseed",
     "keccak",
+    "permissionless",
     "Reentrancy",
+    "TWAP",
+    "Twap",
     "USDT",
     "WBNB"
   ]

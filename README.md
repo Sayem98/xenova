@@ -6,10 +6,11 @@ forwarded to a tax receiver wallet.
 
 > **Status: planning.** The specification lives in
 > [implementation_plan.md](implementation_plan.md). No contract has been written
-> yet — [contracts/](contracts/) and [test/](test/) are empty. See
-> [Open design questions](#open-design-questions) before starting Phase 1.
+> yet — [contracts/](contracts/) and [test/](test/) are empty. Read the
+> [known limitation](#known-limitation-the-top-tax-tiers-cannot-be-sold-through-the-pancakeswap-ui)
+> before starting Phase 1 — it affects what the token can do in production.
 
-## Intended Behaviour
+## Intended Behavior
 
 | Item | Value |
 | --- | --- |
@@ -95,24 +96,63 @@ Verification uses `BSCSCAN_API_KEY`:
 npx hardhat verify --network bscTestnet <ADDRESS> <CONSTRUCTOR_ARGS>
 ```
 
-## Open Design Questions
+## Known Limitation: the top tax tiers cannot be sold through the PancakeSwap UI
 
-Two items must be resolved before the contract is written.
+**Read this before launch.** It is a deliberate, accepted trade-off, not a bug.
 
-**1. The tax breaks ordinary PancakeSwap sells.** Taking a fee on transfer means
-the pair receives less than the router promised, so `pair.swap()` fails its
-balance check and reverts with `Pancake: K`. Sellers must route through
-`swapExactTokensForTokensSupportingFeeOnTransferTokens`, and set a slippage
-tolerance above the current tax rate. The PancakeSwap UI caps how high that can
-be set, so the top tiers may not be sellable through the normal front end. This
-needs to be confirmed on testnet against the real UI before launch.
+Taking a fee on transfer means the pair receives less than the router promised,
+so `pair.swap()` fails its balance check and reverts with `Pancake: K`. Sellers
+must route through `swapExactTokensForTokensSupportingFeeOnTransferTokens` and
+set slippage at least as high as the current tax rate:
 
-**2. The oracle is unspecified.** The plan defers between a wallet-pushed value
-and a TWAP. A pushed value can be front-run in the mempool and freezes at its
-last reading if the updater goes offline; a value read live from pair reserves is
-flash-loan manipulable. Whichever is chosen, the contract must wrap the oracle
-call in `try/catch` and clamp the result, so a failing or malicious oracle cannot
-freeze transfers or return a tax above the cap.
+```
+amountOutMin = quotedOut x (1 - slippage)     // UI quote ignores the tax
+actualOut    = quotedOut x (1 - tax)
+need actualOut >= amountOutMin   ->   slippage >= tax
+```
 
-Note also that `renounceOwnership()` makes `setOracleAddress` unreachable,
-permanently locking in whatever oracle is configured at that moment.
+**PancakeSwap's UI caps manual slippage below 50%.** Entering `60` produces
+"Enter a valid slippage percentage" and the applied setting silently reverts to
+its previous value. A [2021 issue on the v1 interface][pcs-450] names a 49%
+block, and the limit survived the rewrite.
+
+So these tiers cannot be executed by a seller on the standard front end:
+
+| 24h drop | Sell tax | Slippage needed | Sellable on PancakeSwap? |
+| --- | --- | --- | --- |
+| 10% | 25% | 25%+ | ✅ |
+| 12% | 35% | 35%+ | ✅ |
+| 14% | 45% | 45%+ | ⚠️ almost no headroom |
+| 15% | 50% | 50%+ | ❌ |
+| 16% | 55% | 55%+ | ❌ |
+| 17%+ | 60% | 60%+ | ❌ |
+
+**What a seller in those tiers experiences:** they type 60 into slippage, the UI
+rejects it and keeps their old value, they press Swap, and the transaction
+reverts with `Pancake: K` and no explanation. From their side this is
+indistinguishable from a honeypot.
+
+Note also that slippage must cover the tax *plus* real price impact, so a large
+sell into a thin pool needs more headroom than the table shows — and whatever a
+seller sets above `tax + impact` is extractable by sandwich bots.
+
+If the top tiers need to actually function later, the options are a custom front
+end that sets `amountOutMin` directly, or lowering the ceiling. The latter needs
+a redeploy, since the tier curve is a `pure` function with a hardcoded cap.
+
+[pcs-450]: https://github.com/pancakeswap/pancake-swap-interface-v1/issues/450
+
+## Design Decisions
+
+Settled 2026-08-15 — see [implementation_plan.md](implementation_plan.md) §0.
+
+*   **Price source:** on-chain TWAP comparing a 30-minute average now against a
+    30-minute average from 24 hours ago. This matches the 24h change figure shown
+    on DEX charts, which is what the spec calls for. Comparing against a 24-hour
+    *average* would read −1% where the chart reads −20%.
+*   **Oracle safety:** the token wraps every oracle call in `try/catch`, clamps
+    the result, and falls back to the 3% floor if the reading is stale. A failing
+    or dead oracle can never freeze transfers or exceed the cap.
+*   **Admin:** a plain owner key. `setOracleAddress` and `setTaxReceiver` take
+    effect immediately. Do **not** call `renounceOwnership()` — it permanently
+    kills both setters and locks in whatever oracle is live at that moment.
