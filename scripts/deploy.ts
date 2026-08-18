@@ -1,6 +1,6 @@
 import { ethers, network } from "hardhat";
 
-import { OWNER, addressesFor } from "./addresses";
+import { OWNER, addressesFor, assertOwnerAllowed, pairFor } from "./addresses";
 
 /// Step 1 of the launch: deploy the token itself.
 ///
@@ -11,6 +11,8 @@ import { OWNER, addressesFor } from "./addresses";
 /// added from the OWNER wallet, after which scripts/deployOracle.ts wires up
 /// the price feed.
 async function main() {
+  assertOwnerAllowed(network.name);
+
   const { router, usdt } = addressesFor(network.name);
   const taxReceiver = process.env.TAX_RECEIVER || OWNER;
 
@@ -37,14 +39,7 @@ async function main() {
   // Read the state back from the chain rather than trusting the arguments we
   // just sent — this is the check that the supply really landed on OWNER.
   const supply = await token.totalSupply();
-  const factory = await ethers.getContractAt(
-    "IPancakeFactory",
-    await (await ethers.getContractAt("IPancakeRouter02", router)).factory()
-  );
-  const weth = await (
-    await ethers.getContractAt("IPancakeRouter02", router)
-  ).WETH();
-  const pair = await factory.getPair(address, weth);
+  const pair = await pairFor(ethers, router, address);
 
   console.log(`Xenova       ${address}`);
   console.log(`pair         ${pair}`);
@@ -62,7 +57,10 @@ async function main() {
       `"${router}" "${usdt}" "${taxReceiver}" "${OWNER}"`
   );
   console.log("");
-  console.log("Next: add liquidity from the OWNER wallet, then run");
+  console.log("Next: seed the pool from the OWNER wallet, then wire the oracle");
+  console.log(
+    `  TOKEN_ADDRESS=${address} npx hardhat run scripts/addLiquidity.ts --network ${network.name}`
+  );
   console.log(
     `  TOKEN_ADDRESS=${address} npx hardhat run scripts/deployOracle.ts --network ${network.name}`
   );

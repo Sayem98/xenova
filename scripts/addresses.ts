@@ -24,11 +24,34 @@ export const ADDRESSES: Record<string, NetworkAddresses> = {
   },
   bscTestnet: {
     router: "0xD99D1c33F9fC3444f8101754aBC46c52416550D1",
-    // There is no single canonical testnet USDT. Point TESTNET_USDT at whichever
-    // one your test pool uses rather than trusting a hardcoded guess.
-    usdt: process.env.TESTNET_USDT ?? "",
+    // Verified on-chain: "Tether USD", 18 decimals, with a live WBNB pool — the
+    // tax route [Xenova, WBNB, USDT] needs that pool to exist to complete.
+    // TESTNET_USDT overrides it if your pool uses a different one.
+    usdt:
+      process.env.TESTNET_USDT ||
+      "0x7ef95a0FEE0Dd31b22626fA2e10Ee6A223F8a684",
   },
 };
+
+/// An OWNER_ADDRESS override is a testnet convenience. On mainnet it must never
+/// silently redirect ownership and 210,000,000 tokens to somewhere unintended,
+/// so anything but the real owner is a hard stop.
+export function assertOwnerAllowed(network: string): void {
+  if (network !== "bsc") return;
+  if (OWNER.toLowerCase() !== MAINNET_OWNER.toLowerCase()) {
+    throw new Error(
+      `Refusing to deploy to mainnet with OWNER_ADDRESS=${OWNER}. ` +
+        `The mainnet owner is ${MAINNET_OWNER}. Unset OWNER_ADDRESS.`
+    );
+  }
+}
+
+/// Mocks and other test-only wiring must never reach mainnet.
+export function assertTestnetOnly(network: string, what: string): void {
+  if (network === "bsc") {
+    throw new Error(`${what} must never be deployed to mainnet.`);
+  }
+}
 
 export function addressesFor(network: string): NetworkAddresses {
   const found = ADDRESSES[network];
@@ -45,4 +68,18 @@ export function addressesFor(network: string): NetworkAddresses {
     );
   }
   return found;
+}
+
+/// Resolves the pair the token created for itself at deploy time.
+export async function pairFor(
+  ethers: any,
+  router: string,
+  token: string
+): Promise<string> {
+  const routerContract = await ethers.getContractAt("IPancakeRouter02", router);
+  const factory = await ethers.getContractAt(
+    "IPancakeFactory",
+    await routerContract.factory()
+  );
+  return factory.getPair(token, await routerContract.WETH());
 }

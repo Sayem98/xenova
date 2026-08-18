@@ -6,7 +6,7 @@
   "scripts": {
     "compile": "hardhat compile",
     "test": "hardhat test",
-    "test:fork": "FORK_BSC=true hardhat test"
+    "test:fork": "FORK_BSC=true hardhat test test/Xenova.fork.test.ts"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-chai-matchers": "^2.0.0",

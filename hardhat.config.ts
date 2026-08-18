@@ -16,13 +16,21 @@ const accounts = process.env.DEPLOYER_PRIVATE_KEY
   ? [process.env.DEPLOYER_PRIVATE_KEY]
   : [];
 
+// Forking needs ARCHIVE state. The public dataseed nodes are pruned and keep
+// only ~100 blocks, so they fail with "missing trie node" — which is why this
+// does not reuse BSC_MAINNET_RPC. Blast's public endpoint serves BSC archive
+// state for free and with no API key, verified back 5,000,000 blocks, so
+// `yarn test:fork` works with no configuration. Override for your own provider.
+const BSC_ARCHIVE_RPC =
+  process.env.BSC_ARCHIVE_RPC || "https://bsc-mainnet.public.blastapi.io";
+
 // Forking is opt-in: `FORK_BSC=true npx hardhat test`. Left off by default so a
 // plain `npx hardhat test` never depends on network access. Pin FORK_BLOCK to
 // keep fork runs cached and deterministic.
 const forking =
   process.env.FORK_BSC === "true"
     ? {
-        url: BSC_MAINNET_RPC,
+        url: BSC_ARCHIVE_RPC,
         blockNumber: process.env.FORK_BLOCK
           ? Number(process.env.FORK_BLOCK)
           : undefined,

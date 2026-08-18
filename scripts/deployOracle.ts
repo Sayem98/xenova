@@ -1,6 +1,6 @@
 import { ethers, network } from "hardhat";
 
-import { addressesFor } from "./addresses";
+import { addressesFor, pairFor } from "./addresses";
 
 /// Step 2 of the launch, run AFTER liquidity is added:
 ///
@@ -31,15 +31,7 @@ async function main() {
     );
   }
 
-  const routerContract = await ethers.getContractAt("IPancakeRouter02", router);
-  const factory = await ethers.getContractAt(
-    "IPancakeFactory",
-    await routerContract.factory()
-  );
-  const pairAddress = await factory.getPair(
-    tokenAddress,
-    await routerContract.WETH()
-  );
+  const pairAddress = await pairFor(ethers, router, tokenAddress);
   if (pairAddress === ethers.ZeroAddress) {
     throw new Error("No Xenova/WBNB pair found. Was the token deployed here?");
   }

@@ -69,25 +69,32 @@ Generates `artifacts/` and `typechain-types/`.
 ## Testing
 
 ```bash
-yarn test          # local only, no network access needed
-yarn test:fork     # forks BSC mainnet — real router, WBNB, and USDT
+yarn test          # 36 local tests, no network access needed
+yarn test:fork     # 6 tests against a BSC mainnet fork — real router, WBNB, USDT
 ```
 
-Fork tests are the only ones that exercise the real PancakeSwap pair, and
-therefore the only ones that can catch the fee-on-transfer failure described
-below.
+Both work with **no configuration and no API key**. `yarn test` skips the fork
+suite; `yarn test:fork` runs only it.
 
-**Fork testing requires a paid archive RPC.** The default
-`https://bsc-dataseed.binance.org` is a pruned full node, not an archive node, so
-forking against it fails immediately:
+Fork tests are the only ones that exercise a real PancakeSwap pair, and so the
+only ones that can reproduce the fee-on-transfer behavior described below. They
+cover what a mock router cannot:
 
-```
-missing trie node   (eth_getCode at a recent block)
-```
+| Test | What it proves |
+| --- | --- |
+| 3% on a real buy | The router's quote ignores the tax; the buyer lands 3% short |
+| Tier rate on a real sell | A 10% drop withholds exactly 25% |
+| **`Pancake: K`** | `swapExactTokensForETH` reverts on a fee-taking token |
+| Slippage below tax | 49% slippage at the 60% tier → `INSUFFICIENT_OUTPUT_AMOUNT` |
+| Same sell, high slippage | Succeeds — **the contract is not a honeypot**, only the UI blocks it |
+| Real USDT payout | Tax reaches the receiver as genuine 18-decimal BSC USDT |
 
-Set `BSC_MAINNET_RPC` to an archive endpoint (Alchemy, QuickNode, dRPC paid tier)
-before running `yarn test:fork`. Pin `FORK_BLOCK` to keep runs cached and
-deterministic.
+Forking needs **archive** state. The public dataseed nodes are pruned and keep
+only ~100 blocks, failing with `missing trie node`, so forking deliberately does
+not use `BSC_MAINNET_RPC`. It defaults to `https://bsc-mainnet.public.blastapi.io`,
+which serves BSC archive state free and without an API key (verified back
+5,000,000 blocks). Override with `BSC_ARCHIVE_RPC` to use your own provider, and
+pin `FORK_BLOCK` to keep runs cached and deterministic.
 
 ## Deployment
 
@@ -96,21 +103,38 @@ Networks `bsc` (chainId 56) and `bscTestnet` (97) are configured in
 and USDT addresses per network, plus the owner address, live in
 [scripts/addresses.ts](scripts/addresses.ts).
 
-Launch is three steps, in this order:
+> **Deploying to mainnet? Read
+> [how_to_deploy_on_mainnet.md](how_to_deploy_on_mainnet.md) first.** It covers
+> the irreversible decisions, real gas costs, and the ~25-hour oracle cold start
+> that must be waited out *before* announcing the token.
+
+Launch is four steps, in this order. Every script signed by the owner checks
+`token.owner()` against the signer first and exits with a clear message rather
+than a raw `OwnableUnauthorizedAccount`.
 
 ```bash
 # 1. Deploy the token. Supply and ownership go straight to the owner wallet.
 npx hardhat run scripts/deploy.ts --network bsc
 
-# 2. Add liquidity from the OWNER wallet on PancakeSwap, then wire up the
-#    oracle. This one must be signed by the owner — setOracle is onlyOwner.
+# 2. Seed the pool. Owner-signed: it holds the supply and is the only
+#    fee-excluded address, which is what keeps the add from being taxed.
+TOKEN_ADDRESS=0x… npx hardhat run scripts/addLiquidity.ts --network bsc
+
+# 3. Deploy the TWAP oracle and point the token at it. Owner-signed.
 TOKEN_ADDRESS=0x… npx hardhat run scripts/deployOracle.ts --network bsc
 
-# 3. Start the keeper and leave it running.
+# 4. Start the keeper and leave it running. Any funded key will do.
 ORACLE_ADDRESS=0x… npx hardhat run scripts/keeper.ts --network bsc
 ```
 
-Step 3 is not optional. The oracle only records a price when someone calls
+`scripts/status.ts` is read-only and prints the full picture at any point —
+supply, owner, current tax tier, accrued tax, oracle history, pair reserves:
+
+```bash
+TOKEN_ADDRESS=0x… npx hardhat run scripts/status.ts --network bsc
+```
+
+Step 4 is not optional. The oracle only records a price when someone calls
 `update()`, and nothing on chain does that by itself. Until the ring buffer holds
 50 observations (~25 hours) `get24hPriceDropBps()` returns `0` and **the sell tax
 stays at its 3% floor** — the dynamic tax never activates. Budget roughly 48
@@ -119,14 +143,56 @@ calls a day, about 0.0019 BNB/day at 1 gwei.
 `scripts/deployOracle.ts` refuses to run against a pair with zero reserves, since
 an oracle started on an empty pool records 25 hours of meaningless observations.
 
-For a testnet run, set `TESTNET_USDT` in `.env` — there is no single canonical
-USDT on BSC testnet, so nothing is hardcoded for it.
-
-Both scripts print a ready-to-paste verify line. Verification uses
+Both deploy scripts print a ready-to-paste verify line. Verification uses
 `BSCSCAN_API_KEY`:
 
 ```bash
 npx hardhat verify --network bsc <TOKEN> "<ROUTER>" "<USDT>" "<TAX_RECEIVER>" "<OWNER>"
+```
+
+### Testnet rehearsal
+
+Most of what a testnet run proves is already covered by `yarn test:fork`, which
+needs no BNB at all. Use testnet for what a fork cannot show: the token appearing
+in wallets and on the PancakeSwap testnet UI, and how a real seller experiences
+the slippage cap.
+
+`scripts/addLiquidity.ts` defaults to a deliberately small pool — 1,000,000
+Xenova against **0.05 BNB** — because BSC testnet faucets drip roughly 0.1 BNB
+per request. Pool size only changes price impact, not whether the tax logic
+works. On mainnet both `LP_TOKENS` and `LP_BNB` must be set explicitly; there is
+no safe default for a real pool.
+
+Testnet USDT defaults to `0x7ef95a0FEE0Dd31b22626fA2e10Ee6A223F8a684` ("Tether
+USD", 18 decimals), verified to have a live WBNB pool so the
+`[Xenova, WBNB, USDT]` tax route can complete. Override with `TESTNET_USDT`.
+
+Set `OWNER_ADDRESS` to a throwaway address so the production key never has to sit
+in a `.env`. Deploying to **mainnet** with `OWNER_ADDRESS` set to anything other
+than the real owner is refused outright.
+
+The TWAP oracle needs ~25 hours of history before it reports a real drop, which
+makes the tax tiers untestable in one sitting. `scripts/mockOracle.ts` points the
+token at a `MockPriceOracle` whose drop you set directly, so every tier can be
+exercised in minutes:
+
+```bash
+TOKEN_ADDRESS=0x… DROP_BPS=1000 npx hardhat run scripts/mockOracle.ts --network bscTestnet
+#   0 -> 3% floor, 1000 -> 25%, 1500 -> 50%, 1700 -> 60% cap
+```
+
+It refuses to run on mainnet — a mock oracle there is an owner-controlled tax
+dial with no price feed behind it. Replace it with the real oracle via step 3
+before considering a rehearsal finished, and confirm with `scripts/status.ts`
+that `token.oracle()` points at the `XenovaTwapOracle`.
+
+`swapTokensAtAmount` defaults to 105,000 Xenova (0.05% of supply), which a
+test-sized trade will never reach. Lower it to watch the swap-back fire:
+
+```bash
+npx hardhat console --network bscTestnet
+> const t = await ethers.getContractAt("Xenova", "0x…")
+> await t.setSwapTokensAtAmount(ethers.parseEther("100"))
 ```
 
 ## Known Limitation: the top tax tiers cannot be sold through the PancakeSwap UI
