@@ -13,21 +13,21 @@ const price = (p: number) => BigInt(Math.round(p * 1000));
 async function deployFixture() {
   const [owner] = await ethers.getSigners();
 
-  const dtk = ethers.getAddress("0x" + "11".repeat(20));
+  const xenova = ethers.getAddress("0x" + "11".repeat(20));
   const wbnb = ethers.getAddress("0x" + "22".repeat(20));
 
   const MockPair = await ethers.getContractFactory("MockPair");
-  const pair = await MockPair.deploy(dtk, wbnb);
+  const pair = await MockPair.deploy(xenova, wbnb);
 
-  return { owner, pair, dtk, wbnb };
+  return { owner, pair, xenova, wbnb };
 }
 
 async function deployOracleAt(startPrice: number) {
-  const { pair, dtk } = await deployFixture();
+  const { pair, xenova } = await deployFixture();
   await pair.setReserves(BASE, price(startPrice));
 
-  const DtkTwapOracle = await ethers.getContractFactory("DtkTwapOracle");
-  const oracle = await DtkTwapOracle.deploy(await pair.getAddress(), dtk);
+  const XenovaTwapOracle = await ethers.getContractFactory("XenovaTwapOracle");
+  const oracle = await XenovaTwapOracle.deploy(await pair.getAddress(), xenova);
 
   return { pair, oracle };
 }
@@ -58,7 +58,7 @@ async function fillHistory(
   }
 }
 
-describe("DtkTwapOracle", () => {
+describe("XenovaTwapOracle", () => {
   describe("cold start", () => {
     it("reports no drop until the buffer spans a full 24h", async () => {
       const { pair, oracle } = await deployOracleAt(1.25);

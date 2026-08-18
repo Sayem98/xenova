@@ -4,9 +4,9 @@
 
 | Decision | Choice |
 | --- | --- |
-| Price source | **On-chain 24h TWAP** read from the DTK/WBNB PancakeSwap V2 pair |
+| Price source | **On-chain 24h TWAP** read from the Xenova/WBNB PancakeSwap V2 pair |
 | Oracle location | Separate contract behind `IPriceOracle`, swappable |
-| Admin model | **Plain owner key** (`Ownable`), `setOracleAddress` takes effect immediately |
+| Admin model | **Plain owner key** (`Ownable`), `setOracle` takes effect immediately |
 | Drop precision | Basis points (0–10000), not whole percent |
 
 Ruled out: Chainlink (no feed exists for an unlaunched token), push oracle
@@ -14,7 +14,7 @@ Ruled out: Chainlink (no feed exists for an unlaunched token), push oracle
 self-anchoring spot price (a seller can pump spot in the same transaction to
 read a 0% drop).
 
-**Consequence of the admin choice:** `setOracleAddress` is a live privileged
+**Consequence of the admin choice:** `setOracle` is a live privileged
 setter with no delay. It can repoint the oracle at a contract reporting a
 permanent 17% drop, pinning every sell at 60%. Holders get no exit window.
 Hold the owner key on a hardware wallet, and do **not** call
@@ -25,21 +25,28 @@ report the live admin key.
 ## 1. Project Overview
 This project involves developing a BEP20 token smart contract with a fixed buy tax (3%) and a dynamic sell tax based on the 24-hour price drop percentage. The sell tax scales according to a specific tier list. All collected taxes are automatically swapped into USDT and sent to a specified tax receiver wallet.
 
-## 2. Token Details (Demo Configuration)
-*   **Token Name:** DemoToken
-*   **Token Symbol:** DTK
-*   **Total Supply:** 100,000,000 (100 Million)
+## 2. Token Details
+*   **Token Name:** Xenova
+*   **Token Symbol:** Xenova
+*   **Total Supply:** 210,000,000 (210 Million)
 *   **Decimals:** 18
-*   **USDT Tax Receiver Wallet:** `0xc8Ba81002d9bf5229E6388c5320B37a7b2bd939A`
+*   **Owner / initial holder:** `0xe7c237447CB352B67bCf53EcF4197e4549e33fd5`
+*   **USDT Tax Receiver Wallet:** same as the owner, above
 
-> The address above is the demo value only. **The client supplies the real
-> receiver**, so `taxReceiver` must be an owner-settable state variable, not a
-> constant — `setTaxReceiver(address)`.
+> Ownership and the full supply are assigned in the deploy transaction through
+> the `initialOwner_` constructor argument, so the deploy key never holds either.
+> The consequence: **liquidity must be added from the owner wallet**, because it
+> is the only address with tokens. The owner is fee-excluded in the constructor
+> so that the liquidity add — which sends tokens to the pair, and so classifies
+> as a sell — is not taxed.
 >
-> Verified on BSC mainnet: the demo address is a live account (nonce 230) with an
-> EIP-7702 delegation, so `taxReceiver.code.length > 0` is **true**. Do not add
-> an "EOA only" guard on the receiver — it would revert. Plain USDT transfers to
-> it are fine; ERC-20 `transfer` does not call the recipient.
+> `taxReceiver` stays an owner-settable state variable rather than a constant, so
+> the USDT destination can be redirected later with `setTaxReceiver(address)`.
+>
+> Do not add an "EOA only" guard on the receiver. A live account can carry an
+> EIP-7702 delegation, which makes `taxReceiver.code.length > 0` true and would
+> revert. Plain USDT transfers to it are fine; ERC-20 `transfer` does not call
+> the recipient.
 
 ## 3. Core Contract Architecture
 *   **Base Standards:** OpenZeppelin `ERC20`, `Ownable`.
@@ -183,7 +190,7 @@ boundary as an executable assertion.
 
 ## 5. TWAP Oracle Contract Spec
 
-A separate contract, e.g. `DtkTwapOracle`, reading the DTK/WBNB pair.
+A separate contract, e.g. `XenovaTwapOracle`, reading the Xenova/WBNB pair.
 
 **Storage:** a 50-slot ring buffer of `(priceCumulative, timestamp)` at 30-minute
 granularity — 50 × 30 min = 25h of history. The extra hour past 24 exists so that
@@ -274,7 +281,7 @@ casual testing: it only shows up when the drop happened earlier in the window.
     and register it, set USDT, exclude owner and contract from fees.
 
 > Track pairs in a mapping with an admin setter, not a single `pancakeV2Pair`
-> address. Otherwise anyone can create a DTK/USDT pair or a V3 pool and sell
+> address. Otherwise anyone can create a Xenova/USDT pair or a V3 pool and sell
 > there untaxed.
 
 ### Phase 3: Transfer & Tax Logic
@@ -287,13 +294,13 @@ casual testing: it only shows up when the drop happened earlier in the window.
 
 ### Phase 4: Swap Back
 1.  `swapBack()` guarded by the `swapping` lock.
-2.  Approve the router, swap DTK → WBNB → USDT, forward USDT to `taxReceiver`.
+2.  Approve the router, swap Xenova → WBNB → USDT, forward USDT to `taxReceiver`.
 3.  Wrap the router call in `try/catch` so an illiquid pool cannot brick transfers.
 
 ### Phase 5: TWAP Oracle
-1.  Implement `DtkTwapOracle` per §5.
+1.  Implement `XenovaTwapOracle` per §5.
 2.  Deploy after the pair exists and has liquidity.
-3.  Point the token at it via `setOracleAddress`.
+3.  Point the token at it via `setOracle`.
 4.  Run the keeper (30-minute cadence) from launch, so history starts filling immediately.
 
 ## 7. Testing Strategy (Hardhat)

@@ -24,11 +24,12 @@ async function deployFixture() {
     await wbnb.getAddress()
   );
 
-  const DemoToken = await ethers.getContractFactory("DemoToken");
-  const token = await DemoToken.deploy(
+  const Xenova = await ethers.getContractFactory("Xenova");
+  const token = await Xenova.deploy(
     await router.getAddress(),
     await usdt.getAddress(),
-    taxReceiver.address
+    taxReceiver.address,
+    owner.address
   );
 
   const pairAddress = await factory.getPair(
@@ -47,13 +48,77 @@ async function deployFixture() {
   return { owner, user, other, taxReceiver, token, usdt, router, pair, pairAddress };
 }
 
-describe("DemoToken", () => {
+describe("Xenova", () => {
   describe("deployment", () => {
-    it("mints the full supply to the deployer", async () => {
+    it("mints the full supply to the owner", async () => {
       const { token, owner } = await deployFixture();
-      const supply = ethers.parseEther("100000000");
+      const supply = ethers.parseEther("210000000");
       expect(await token.totalSupply()).to.equal(supply);
       expect(await token.balanceOf(owner.address)).to.equal(supply);
+    });
+
+    it("has the right name and symbol", async () => {
+      const { token } = await deployFixture();
+      expect(await token.name()).to.equal("Xenova");
+      expect(await token.symbol()).to.equal("Xenova");
+      expect(await token.decimals()).to.equal(18);
+    });
+
+    it("gives ownership and the supply to initialOwner_, not the deployer", async () => {
+      const [deployer, , , taxReceiver, futureOwner] =
+        await ethers.getSigners();
+
+      const MockERC20 = await ethers.getContractFactory("MockERC20");
+      const wbnb = await MockERC20.deploy("Wrapped BNB", "WBNB", 0n);
+      const usdt = await MockERC20.deploy("Tether USD", "USDT", 0n);
+
+      const MockFactory = await ethers.getContractFactory("MockFactory");
+      const factory = await MockFactory.deploy();
+      const MockRouter = await ethers.getContractFactory("MockRouter");
+      const router = await MockRouter.deploy(
+        await factory.getAddress(),
+        await wbnb.getAddress()
+      );
+
+      const Xenova = await ethers.getContractFactory("Xenova");
+      const token = await Xenova.deploy(
+        await router.getAddress(),
+        await usdt.getAddress(),
+        taxReceiver.address,
+        futureOwner.address
+      );
+
+      expect(await token.owner()).to.equal(futureOwner.address);
+      expect(await token.balanceOf(futureOwner.address)).to.equal(
+        await token.totalSupply()
+      );
+      expect(await token.balanceOf(deployer.address)).to.equal(0);
+      expect(await token.isExcludedFromFee(futureOwner.address)).to.equal(true);
+    });
+
+    it("rejects a zero owner", async () => {
+      const { token, router, usdt, taxReceiver } = await deployFixture();
+      const Xenova = await ethers.getContractFactory("Xenova");
+      // Ownable's constructor runs before the body, so this is its custom
+      // error rather than one of our require strings.
+      await expect(
+        Xenova.deploy(
+          await router.getAddress(),
+          await usdt.getAddress(),
+          taxReceiver.address,
+          ethers.ZeroAddress
+        )
+      )
+        .to.be.revertedWithCustomError(token, "OwnableInvalidOwner")
+        .withArgs(ethers.ZeroAddress);
+    });
+
+    it("derives the swap threshold from the supply", async () => {
+      const { token } = await deployFixture();
+      // 0.05% of 210,000,000 = 105,000
+      expect(await token.swapTokensAtAmount()).to.equal(
+        ethers.parseEther("105000")
+      );
     });
 
     it("configures owner, receiver, pair and exclusions", async () => {

@@ -8,11 +8,11 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IPancakeFactory, IPancakeRouter02} from "./interfaces/IPancake.sol";
 import {IPriceOracle} from "./interfaces/IPriceOracle.sol";
 
-/// @title DemoToken (DTK)
+/// @title Xenova
 /// @notice BEP20 token with a fixed 3% buy tax and a sell tax that scales with
 ///         the 24-hour price drop reported by an external oracle. Collected tax
 ///         is swapped to USDT and forwarded to the tax receiver.
-contract DemoToken is ERC20, ERC20Burnable, Ownable {
+contract Xenova is ERC20, ERC20Burnable, Ownable {
     uint256 public constant BUY_TAX_BPS = 300;
     uint256 public constant MAX_SELL_TAX_BPS = 6000;
     uint256 private constant BPS = 10_000;
@@ -44,17 +44,20 @@ contract DemoToken is ERC20, ERC20Burnable, Ownable {
     constructor(
         address router_,
         address usdt_,
-        address taxReceiver_
-    ) ERC20("DemoToken", "DTK") Ownable(msg.sender) {
+        address taxReceiver_,
+        address initialOwner_
+    ) ERC20("Xenova", "Xenova") Ownable(initialOwner_) {
         require(router_ != address(0), "router is zero");
         require(usdt_ != address(0), "usdt is zero");
         require(taxReceiver_ != address(0), "receiver is zero");
+        // initialOwner_ needs no zero-check here: Ownable's constructor runs
+        // first and already reverts with OwnableInvalidOwner(address(0)).
 
         router = IPancakeRouter02(router_);
         usdt = usdt_;
         taxReceiver = taxReceiver_;
 
-        uint256 supply = 100_000_000 * 10 ** decimals();
+        uint256 supply = 210_000_000 * 10 ** decimals();
         // 0.05% of supply. Small enough to swap often without moving the price
         // much, large enough that the swap is not pure gas waste.
         swapTokensAtAmount = supply / 2000;
@@ -64,10 +67,13 @@ contract DemoToken is ERC20, ERC20Burnable, Ownable {
         automatedMarketMakerPairs[pair] = true;
         emit AutomatedMarketMakerPairUpdated(pair, true);
 
-        isExcludedFromFee[msg.sender] = true;
+        // The owner holds the supply and adds the liquidity, which sends tokens
+        // to the pair — that classifies as a sell. Without this exclusion the
+        // liquidity add would be taxed.
+        isExcludedFromFee[initialOwner_] = true;
         isExcludedFromFee[address(this)] = true;
 
-        _mint(msg.sender, supply);
+        _mint(initialOwner_, supply);
     }
 
     // -------------------------------------------------------------- tax math

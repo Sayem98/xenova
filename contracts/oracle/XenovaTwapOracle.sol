@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {IPancakePair} from "../interfaces/IPancake.sol";
 import {IPriceOracle} from "../interfaces/IPriceOracle.sol";
 
-/// @title DtkTwapOracle
+/// @title XenovaTwapOracle
 /// @notice Reports the 24-hour price drop of a token against its AMM pair,
 ///         measured the way a DEX chart reports it: the price now against the
 ///         price 24 hours ago.
@@ -18,7 +18,7 @@ import {IPriceOracle} from "../interfaces/IPriceOracle.sol";
 ///      differ sharply when the drop happened earlier in the window. A token at
 ///      $1.25 that fell to $1.00 twenty-three hours ago and stayed there reads
 ///      -20% here and on a DEX chart, but only -1% against a 24-hour average.
-contract DtkTwapOracle is IPriceOracle {
+contract XenovaTwapOracle is IPriceOracle {
     /// @dev 50 slots x 30 min = 25h. The extra hour past 24 is what makes the
     ///      "24 hours ago" window available: it needs two stored observations,
     ///      48 and 49 slots back.

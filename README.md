@@ -1,25 +1,30 @@
-# Dynamic Tax BEP20 Token
+# Xenova — Dynamic Tax BEP20 Token
 
 A BEP20 token for BNB Smart Chain with a fixed buy tax and a sell tax that scales
 with the token's 24-hour price drop. Collected taxes are swapped to USDT and
 forwarded to a tax receiver wallet.
 
-> **Status: planning.** The specification lives in
-> [implementation_plan.md](implementation_plan.md). No contract has been written
-> yet — [contracts/](contracts/) and [test/](test/) are empty. Read the
+> **Status: implemented and tested, not yet deployed.** The specification lives
+> in [implementation_plan.md](implementation_plan.md). Read the
 > [known limitation](#known-limitation-the-top-tax-tiers-cannot-be-sold-through-the-pancakeswap-ui)
-> before starting Phase 1 — it affects what the token can do in production.
+> before launch — it affects what the token can do in production.
 
-## Intended Behavior
+## Behavior
 
 | Item | Value |
 | --- | --- |
-| Name / symbol | DemoToken (`DTK`) |
-| Total supply | 100,000,000 |
+| Name / symbol | Xenova (`Xenova`) |
+| Total supply | 210,000,000 |
 | Decimals | 18 |
+| Owner / initial holder | `0xe7c237447CB352B67bCf53EcF4197e4549e33fd5` |
 | Buy tax | 3% (fixed) |
 | Sell tax | 3% → 60%, based on the 24h price drop |
 | Tax destination | USDT, sent to the configured tax receiver |
+
+Ownership and the full supply are assigned in the deploy transaction itself, via
+the `initialOwner_` constructor argument — the deploy wallet ends up holding
+nothing and controlling nothing. **Liquidity must therefore be added from the
+owner wallet**, which is the only address holding tokens.
 
 The sell tax tiers in the plan collapse to a single formula:
 
@@ -87,13 +92,41 @@ deterministic.
 ## Deployment
 
 Networks `bsc` (chainId 56) and `bscTestnet` (97) are configured in
-[hardhat.config.ts](hardhat.config.ts). Set `DEPLOYER_PRIVATE_KEY` first. A
-deploy script will be added with the contract.
+[hardhat.config.ts](hardhat.config.ts). Set `DEPLOYER_PRIVATE_KEY` first. Router
+and USDT addresses per network, plus the owner address, live in
+[scripts/addresses.ts](scripts/addresses.ts).
 
-Verification uses `BSCSCAN_API_KEY`:
+Launch is three steps, in this order:
 
 ```bash
-npx hardhat verify --network bscTestnet <ADDRESS> <CONSTRUCTOR_ARGS>
+# 1. Deploy the token. Supply and ownership go straight to the owner wallet.
+npx hardhat run scripts/deploy.ts --network bsc
+
+# 2. Add liquidity from the OWNER wallet on PancakeSwap, then wire up the
+#    oracle. This one must be signed by the owner — setOracle is onlyOwner.
+TOKEN_ADDRESS=0x… npx hardhat run scripts/deployOracle.ts --network bsc
+
+# 3. Start the keeper and leave it running.
+ORACLE_ADDRESS=0x… npx hardhat run scripts/keeper.ts --network bsc
+```
+
+Step 3 is not optional. The oracle only records a price when someone calls
+`update()`, and nothing on chain does that by itself. Until the ring buffer holds
+50 observations (~25 hours) `get24hPriceDropBps()` returns `0` and **the sell tax
+stays at its 3% floor** — the dynamic tax never activates. Budget roughly 48
+calls a day, about 0.0019 BNB/day at 1 gwei.
+
+`scripts/deployOracle.ts` refuses to run against a pair with zero reserves, since
+an oracle started on an empty pool records 25 hours of meaningless observations.
+
+For a testnet run, set `TESTNET_USDT` in `.env` — there is no single canonical
+USDT on BSC testnet, so nothing is hardcoded for it.
+
+Both scripts print a ready-to-paste verify line. Verification uses
+`BSCSCAN_API_KEY`:
+
+```bash
+npx hardhat verify --network bsc <TOKEN> "<ROUTER>" "<USDT>" "<TAX_RECEIVER>" "<OWNER>"
 ```
 
 ## Known Limitation: the top tax tiers cannot be sold through the PancakeSwap UI
@@ -153,6 +186,7 @@ Settled 2026-08-15 — see [implementation_plan.md](implementation_plan.md) §0.
 *   **Oracle safety:** the token wraps every oracle call in `try/catch`, clamps
     the result, and falls back to the 3% floor if the reading is stale. A failing
     or dead oracle can never freeze transfers or exceed the cap.
-*   **Admin:** a plain owner key. `setOracleAddress` and `setTaxReceiver` take
-    effect immediately. Do **not** call `renounceOwnership()` — it permanently
-    kills both setters and locks in whatever oracle is live at that moment.
+*   **Admin:** a plain owner key, `0xe7c237447CB352B67bCf53EcF4197e4549e33fd5`.
+    `setOracle` and `setTaxReceiver` take effect immediately. Do **not** call
+    `renounceOwnership()` — it permanently kills both setters and locks in
+    whatever oracle is live at that moment.
