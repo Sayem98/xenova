@@ -8,6 +8,10 @@ import { addressesFor, pairFor } from "./addresses";
 ///   TOKEN_ADDRESS=0x… npx hardhat run scripts/status.ts --network bscTestnet
 ///
 /// Sends no transactions and needs no signer beyond an RPC connection.
+/// The keeper records every 30 minutes. The slack absorbs block-time jitter and
+/// a slow confirmation; past this it has missed at least one window.
+const LATE_AFTER_MINUTES = 40;
+
 function line(label: string, value: unknown) {
   console.log(`  ${label.padEnd(20)} ${value}`);
 }
@@ -63,6 +67,11 @@ async function main() {
     `${ethers.formatEther(await token.balanceOf(tokenAddress))} Xenova`
   );
 
+  // Block time, not this machine's clock — block time is what the token's
+  // staleness window is measured against on chain.
+  const latest = await ethers.provider.getBlock("latest");
+  const chainNow = BigInt(latest?.timestamp ?? Math.floor(Date.now() / 1000));
+
   const oracleAddress = await token.oracle();
   console.log("\noracle");
   line("address", oracleAddress === ethers.ZeroAddress ? "(none set)" : oracleAddress);
@@ -76,10 +85,28 @@ async function main() {
       const count = await twap.count();
       const slots = await twap.SLOTS();
       line("type", "XenovaTwapOracle");
-      line("history", `${count} / ${slots} slots`);
+      // `count` is every update ever, so it runs past `slots` once the buffer
+      // fills — only the cold-start phase is a meaningful fraction.
       line(
-        "cold start",
-        count < slots ? `yes — reports 0% until ${slots} slots` : "no"
+        "history",
+        count < slots
+          ? `${count} / ${slots} — cold start, reports 0% until ${slots}`
+          : `${count} updates recorded`
+      );
+
+      // The single number that says whether the keeper is alive.
+      const [, updatedAt] = await twap.observations(await twap.head());
+      const ageMinutes = Number(chainNow - updatedAt) / 60;
+      const staleMinutes = Number(await token.ORACLE_STALE_AFTER()) / 60;
+
+      line("last update", `${ageMinutes.toFixed(0)} min ago`);
+      line(
+        "keeper",
+        ageMinutes >= staleMinutes
+          ? `DEAD — past the ${staleMinutes} min window, sells are at the 3% floor`
+          : ageMinutes >= LATE_AFTER_MINUTES
+          ? `late — missed a window, counts as dead at ${staleMinutes} min`
+          : "ok — records every 30 min"
       );
     } catch {
       line("type", "not the TWAP oracle (a mock?)");

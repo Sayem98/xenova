@@ -26,8 +26,8 @@ all.
 
 **Do this instead:** add liquidity, start the oracle and keeper, then wait ~25
 hours *before* announcing the token or driving any volume to it. Confirm with
-`scripts/status.ts` that the oracle reads `50 / 50 slots` and `cold start: no`.
-Only then go public.
+`scripts/status.ts` that `history` has left cold start — it reads
+`50 updates recorded`, not `12 / 50 — cold start`. Only then go public.
 
 ```
 deploy → verify → liquidity → oracle → keeper → [WAIT ~25h] → announce
@@ -209,9 +209,72 @@ separate funded hot wallet and keep the owner key offline.
 Run it under something that restarts on failure (systemd, pm2, a container with
 a restart policy). Do not run it from a laptop.
 
-**If the keeper stops**, readings go stale after 2 hours and the sell tax falls
-back to 3%. The token keeps trading — nothing breaks — but the dynamic tax
-silently stops working. Alert on it.
+### Why it polls every 5 minutes
+
+The keeper wakes every 5 minutes, but the oracle only accepts an update every 30.
+Five ticks in six are refused, and that is the intended design — not a
+misconfiguration to correct.
+
+`get24hPriceDropBps()` looks back **48 observations**, not 24 hours. The two only
+mean the same thing while observations land 30 minutes apart. Polling at exactly
+30 minutes made that fragile: a tick arriving seconds early is refused, and that
+observation slips a full period late, widening the lookback window permanently.
+Six such slips in a day and the contract is comparing against a price 27 hours
+ago while the tax tiers still call it 24.
+
+Polling faster costs almost nothing. A refused call reverts during gas estimation
+and never becomes a transaction, so it spends an RPC call, not gas. The budgeted
+48 recorded updates a day in §3 are unchanged.
+
+The log is quiet by design: refused ticks print nothing, so **one line every
+30 minutes is a healthy keeper** and a gap is worth investigating.
+
+### If the keeper stops
+
+Readings go stale after 2 hours and the sell tax falls back to 3%. The token
+keeps trading, no funds are at risk, and nothing needs repair beyond restarting
+the process — but the dynamic tax is off for the whole outage.
+
+**This deployment runs one keeper and no alerting, by choice.** Both are
+defensible; the consequence is that nothing will tell you when it dies. A
+supervisor restarts a crashed process, but the common failures are not crashes —
+a provider network incident, an RPC endpoint rate-limiting you, or the keeper
+wallet running dry all leave the service "running" and recording nothing.
+
+So the check is manual, and someone has to own it:
+
+```bash
+TOKEN_ADDRESS=0x… npx hardhat run scripts/status.ts --network bsc
+```
+
+The `oracle` block answers it outright — there is nothing to compare against
+yesterday's run:
+
+```
+oracle
+  address              0x…
+  type                 XenovaTwapOracle
+  history              144 updates recorded
+  last update          12 min ago
+  keeper               ok — records every 30 min
+```
+
+| `keeper` line | Meaning |
+| --- | --- |
+| `ok` | Recorded within the last 40 minutes. Nothing to do. |
+| `late — missed a window` | Still using real prices, but at least one update was skipped. Check the keeper log and its BNB balance. |
+| `DEAD — past the 120 min window` | The token is reading 0% drop and every sell is at the 3% floor. Restart the keeper. |
+
+The age is measured against **block time, not your machine's clock**, so it is
+the same number the token's staleness check sees on chain. During the first
+~25 hours `history` reads `12 / 50 — cold start` instead, which is the other
+reason a 0% drop is expected (§0).
+
+Two ways to remove the manual step later, neither required for launch: alert when
+that number stops moving, or run a **second keeper** on a different provider with
+a different key. The second keeper does not double gas — whichever loses the race
+is refused during gas estimation and never broadcasts — so it costs hosting and a
+second funded wallet, nothing more.
 
 ## 8. Wait, then verify before announcing
 
@@ -223,7 +286,8 @@ TOKEN_ADDRESS=0x… npx hardhat run scripts/status.ts --network bsc
 
 Go public only when it shows:
 
-- `history` at `50 / 50 slots` and `cold start: no`
+- `history` reading `50 updates recorded` — no `cold start` left in the line
+- `keeper` reading `ok`, and `last update` under 40 minutes
 - `oracle → type: XenovaTwapOracle` (not a mock, not `(none set)`)
 - pair reserves as expected
 - `sell tax now` responding to real price movement
@@ -268,11 +332,14 @@ pair registration.
 - [ ] Both contracts verified and readable on BscScan
 - [ ] Owner key on hardware wallet, backed up, tested
 - [ ] `renounceOwnership()` documented internally as **never call**
-- [ ] Keeper running under a supervisor, with alerting
+- [ ] Keeper running under a supervisor (systemd/pm2), not on a laptop
+- [ ] Daily `status.ts` check scheduled and **assigned to a named person** — with
+      no alerting and a single keeper, this is the only thing that detects an
+      outage (§7)
 - [ ] Keeper wallet funded and on a top-up schedule (~0.008 BNB/month at current gas)
 - [ ] Oracle confirmed out of cold start before any announcement
-- [ ] Client briefed on §9, on the keeper dependency, and on the fact that the
-      owner key can repoint the oracle at any time — honeypot scanners will flag
-      the live admin key
+- [ ] Client briefed on §9, on the keeper dependency and its manual daily check,
+      and on the fact that the owner key can repoint the oracle at any time —
+      honeypot scanners will flag the live admin key
 - [ ] First real buy and sell executed and checked against expected tax
 - [ ] USDT confirmed arriving at the tax receiver after swap-back fires

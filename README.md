@@ -138,7 +138,15 @@ Step 4 is not optional. The oracle only records a price when someone calls
 `update()`, and nothing on chain does that by itself. Until the ring buffer holds
 50 observations (~25 hours) `get24hPriceDropBps()` returns `0` and **the sell tax
 stays at its 3% floor** — the dynamic tax never activates. Budget roughly 48
-calls a day, about 0.0019 BNB/day at 1 gwei.
+recorded updates a day at 106,400 gas each: about 0.00026 BNB/day at 0.05 gwei,
+0.005 BNB/day at 1 gwei.
+
+The keeper polls every 5 minutes, not every 30. `get24hPriceDropBps()` looks back
+48 observations rather than 24 hours, so the two only agree while observations
+land 30 minutes apart — and at a 30-minute poll, a tick arriving seconds early is
+refused and slips a full period, widening that window for good. Polling faster
+costs nothing: a refused call reverts during gas estimation and never becomes a
+transaction.
 
 `scripts/deployOracle.ts` refuses to run against a pair with zero reserves, since
 an oracle started on an empty pool records 25 hours of meaningless observations.
