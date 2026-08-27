@@ -69,8 +69,8 @@ whatever BNB goes into the liquidity pool.
 **Decide the liquidity.** `LP_TOKENS` and `LP_BNB` have no defaults on mainnet;
 the script refuses to run without both, on purpose.
 
-**Decide the tax receiver.** Defaults to the owner. Set `TAX_RECEIVER` to use a
-different wallet.
+**The tax receiver** is `0xc8Ba…939A`, hardcoded in `scripts/addresses.ts`.
+Nothing to decide, and nothing to set in `.env`.
 
 **Have the keeper host ready before you start.** See §7 — the token's headline
 feature does not work without it.
@@ -110,13 +110,14 @@ DEPLOYER_PRIVATE_KEY=<the owner key>
 BSCSCAN_API_KEY=<your key>
 LP_TOKENS=<decided in §2>
 LP_BNB=<decided in §2>
-# TAX_RECEIVER=   # leave blank to use the owner
+# TAX_RECEIVER=   # leave blank; the receiver is in scripts/addresses.ts
 ```
 
-**Leave `OWNER_ADDRESS` blank.** It exists only for testnet rehearsals. On
-mainnet, setting it to anything other than `0xe7c2…3fd5` makes the deploy script
-refuse to run — that guard is what stops 210,000,000 tokens going to the wrong
-address.
+**Leave `OWNER_ADDRESS` and `TAX_RECEIVER` blank.** Both exist only for testnet
+rehearsals. On mainnet, setting either to anything other than the real address
+(`0xe7c2…3fd5` and `0xc8Ba…939A`) makes the deploy script refuse to run — those
+guards are what stop 210,000,000 tokens, and every future tax payment, going to
+the wrong address.
 
 Then confirm the build is clean before touching the network:
 

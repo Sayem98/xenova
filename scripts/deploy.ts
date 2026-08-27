@@ -1,6 +1,13 @@
 import { ethers, network } from "hardhat";
 
-import { OWNER, addressesFor, assertOwnerAllowed, pairFor } from "./addresses";
+import {
+  OWNER,
+  TAX_RECEIVER,
+  addressesFor,
+  assertOwnerAllowed,
+  assertTaxReceiverAllowed,
+  pairFor,
+} from "./addresses";
 
 /// Step 1 of the launch: deploy the token itself.
 ///
@@ -12,9 +19,9 @@ import { OWNER, addressesFor, assertOwnerAllowed, pairFor } from "./addresses";
 /// the price feed.
 async function main() {
   assertOwnerAllowed(network.name);
+  assertTaxReceiverAllowed(network.name);
 
   const { router, usdt } = addressesFor(network.name);
-  const taxReceiver = process.env.TAX_RECEIVER || OWNER;
 
   const [deployer] = await ethers.getSigners();
   if (!deployer) {
@@ -25,13 +32,13 @@ async function main() {
   console.log(`deployer     ${deployer.address}`);
   console.log(`router       ${router}`);
   console.log(`usdt         ${usdt}`);
-  console.log(`taxReceiver  ${taxReceiver}`);
+  console.log(`taxReceiver  ${TAX_RECEIVER}`);
   console.log(`owner        ${OWNER}`);
   console.log("");
 
   const token = await (
     await ethers.getContractFactory("Xenova")
-  ).deploy(router, usdt, taxReceiver, OWNER);
+  ).deploy(router, usdt, TAX_RECEIVER, OWNER);
   await token.waitForDeployment();
 
   const address = await token.getAddress();
@@ -54,7 +61,7 @@ async function main() {
   console.log("Verify with:");
   console.log(
     `  npx hardhat verify --network ${network.name} ${address} ` +
-      `"${router}" "${usdt}" "${taxReceiver}" "${OWNER}"`
+      `"${router}" "${usdt}" "${TAX_RECEIVER}" "${OWNER}"`
   );
   console.log("");
   console.log("Next: seed the pool from the OWNER wallet, then wire the oracle");

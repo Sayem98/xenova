@@ -17,9 +17,10 @@ forwarded to a tax receiver wallet.
 | Total supply | 210,000,000 |
 | Decimals | 18 |
 | Owner / initial holder | `0xe7c237447CB352B67bCf53EcF4197e4549e33fd5` |
+| Tax receiver | `0xc8Ba81002d9bf5229E6388c5320B37a7b2bd939A` |
 | Buy tax | 3% (fixed) |
 | Sell tax | 3% → 60%, based on the 24h price drop |
-| Tax destination | USDT, sent to the configured tax receiver |
+| Tax destination | USDT, sent to the tax receiver above |
 
 Ownership and the full supply are assigned in the deploy transaction itself, via
 the `initialOwner_` constructor argument — the deploy wallet ends up holding
