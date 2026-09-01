@@ -65,11 +65,12 @@ const config: HardhatUserConfig = {
       accounts,
     },
   },
+  // A single string key means an etherscan.io key, which hardhat-verify routes
+  // to the Etherscan v2 API with chainid=56. Passing an object here instead
+  // selects the legacy per-explorer path — api.bscscan.com, whose v1 support
+  // ended May 31st 2025 — so verification would fail with a valid key.
   etherscan: {
-    apiKey: {
-      bsc: bscscanApiKey,
-      bscTestnet: bscscanApiKey,
-    },
+    apiKey: bscscanApiKey,
   },
   gasReporter: {
     enabled: process.env.REPORT_GAS === "true",

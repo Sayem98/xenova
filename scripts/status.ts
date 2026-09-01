@@ -113,7 +113,7 @@ async function main() {
     }
   }
 
-  const pairAddress = await pairFor(ethers, router, tokenAddress);
+  const pairAddress = await pairFor(ethers, router, tokenAddress, usdt);
   console.log("\npair");
   line("address", pairAddress);
   if (pairAddress !== ethers.ZeroAddress) {
@@ -124,7 +124,7 @@ async function main() {
     line(
       "reserves",
       `${ethers.formatEther(isToken0 ? reserve0 : reserve1)} Xenova / ` +
-        `${ethers.formatEther(isToken0 ? reserve1 : reserve0)} WBNB`
+        `${ethers.formatEther(isToken0 ? reserve1 : reserve0)} USDT`
     );
     line("registered as AMM", await token.automatedMarketMakerPairs(pairAddress));
     if (reserve0 === 0n || reserve1 === 0n) {

@@ -20,7 +20,16 @@ forwarded to a tax receiver wallet.
 | Tax receiver | `0xc8Ba81002d9bf5229E6388c5320B37a7b2bd939A` |
 | Buy tax | 3% (fixed) |
 | Sell tax | 3% → 60%, based on the 24h price drop |
+| Trading pair | Xenova/USDT on PancakeSwap V2 |
 | Tax destination | USDT, sent to the tax receiver above |
+
+The pair is against **USDT, not WBNB**, and that is what makes the sell tax mean
+what it says. The oracle prices whatever the pair holds, so a WBNB pair would
+report a "drop" every time BNB rallied — Xenova flat in dollars, BNB up 10%, and
+sellers charged 25% for a token that never moved. Against USDT the 24h drop is a
+dollar drop. It also lets the tax swap take a single `[Xenova, USDT]` hop through
+our own pool instead of routing through WBNB and depending on a pool we do not
+control.
 
 Ownership and the full supply are assigned in the deploy transaction itself, via
 the `initialOwner_` constructor argument — the deploy wallet ends up holding
@@ -70,8 +79,8 @@ Generates `artifacts/` and `typechain-types/`.
 ## Testing
 
 ```bash
-yarn test          # 36 local tests, no network access needed
-yarn test:fork     # 6 tests against a BSC mainnet fork — real router, WBNB, USDT
+yarn test          # 37 local tests, no network access needed
+yarn test:fork     # 6 tests against a BSC mainnet fork — real router, real USDT
 ```
 
 Both work with **no configuration and no API key**. `yarn test` skips the fork
@@ -85,7 +94,7 @@ cover what a mock router cannot:
 | --- | --- |
 | 3% on a real buy | The router's quote ignores the tax; the buyer lands 3% short |
 | Tier rate on a real sell | A 10% drop withholds exactly 25% |
-| **`Pancake: K`** | `swapExactTokensForETH` reverts on a fee-taking token |
+| **`Pancake: K`** | `swapExactTokensForTokens` reverts on a fee-taking token |
 | Slippage below tax | 49% slippage at the 60% tier → `INSUFFICIENT_OUTPUT_AMOUNT` |
 | Same sell, high slippage | Succeeds — **the contract is not a honeypot**, only the UI blocks it |
 | Real USDT payout | Tax reaches the receiver as genuine 18-decimal BSC USDT |
@@ -115,11 +124,13 @@ than a raw `OwnableUnauthorizedAccount`.
 
 ```bash
 # 1. Deploy the token. Supply and ownership go straight to the owner wallet.
+#    It creates its own Xenova/USDT pair in the constructor.
 npx hardhat run scripts/deploy.ts --network bsc
 
-# 2. Seed the pool. Owner-signed: it holds the supply and is the only
-#    fee-excluded address, which is what keeps the add from being taxed.
-TOKEN_ADDRESS=0x… npx hardhat run scripts/addLiquidity.ts --network bsc
+# 2. Seed the pool with Xenova AND USDT, both from the owner wallet. Owner-signed:
+#    it holds the supply and is the only fee-excluded address, which is what
+#    keeps the add from being taxed.
+TOKEN_ADDRESS=0x… LP_TOKENS=… LP_USDT=… npx hardhat run scripts/addLiquidity.ts --network bsc
 
 # 3. Deploy the TWAP oracle and point the token at it. Owner-signed.
 TOKEN_ADDRESS=0x… npx hardhat run scripts/deployOracle.ts --network bsc
@@ -167,14 +178,24 @@ in wallets and on the PancakeSwap testnet UI, and how a real seller experiences
 the slippage cap.
 
 `scripts/addLiquidity.ts` defaults to a deliberately small pool — 1,000,000
-Xenova against **0.05 BNB** — because BSC testnet faucets drip roughly 0.1 BNB
-per request. Pool size only changes price impact, not whether the tax logic
-works. On mainnet both `LP_TOKENS` and `LP_BNB` must be set explicitly; there is
-no safe default for a real pool.
+Xenova against **1,000 USDT**. Pool size only changes price impact, not whether
+the tax logic works. On mainnet both `LP_TOKENS` and `LP_USDT` must be set
+explicitly; there is no safe default for a real pool. BNB is still needed, but
+only for gas.
 
-Testnet USDT defaults to `0x7ef95a0FEE0Dd31b22626fA2e10Ee6A223F8a684` ("Tether
-USD", 18 decimals), verified to have a live WBNB pool so the
-`[Xenova, WBNB, USDT]` tax route can complete. Override with `TESTNET_USDT`.
+Both sides of the pool come out of the owner wallet, so a rehearsal needs testnet
+USDT — and faucets do not hand it out. `scripts/deployMockUsdt.ts` deploys a
+stand-in ("Tether USD", 18 decimals, same as the real one) and mints you as much
+as you want. That makes testnet a five-step sequence, with the mock first:
+
+```bash
+# 0. Testnet only. Paste the printed address into .env as TESTNET_USDT before
+#    step 1 — the token bakes the USDT address into its constructor, so changing
+#    it later means redeploying the token.
+npx hardhat run scripts/deployMockUsdt.ts --network bscTestnet
+
+# 1-4 as above, with --network bscTestnet.
+```
 
 Set `OWNER_ADDRESS` to a throwaway address so the production key never has to sit
 in a `.env`. Deploying to **mainnet** with `OWNER_ADDRESS` set to anything other

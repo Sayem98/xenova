@@ -4,7 +4,7 @@
 
 | Decision | Choice |
 | --- | --- |
-| Price source | **On-chain 24h TWAP** read from the Xenova/WBNB PancakeSwap V2 pair |
+| Price source | **On-chain 24h TWAP** read from the Xenova/USDT PancakeSwap V2 pair |
 | Oracle location | Separate contract behind `IPriceOracle`, swappable |
 | Admin model | **Plain owner key** (`Ownable`), `setOracle` takes effect immediately |
 | Drop precision | Basis points (0–10000), not whole percent |
@@ -145,7 +145,7 @@ A dead keeper degrades to the 3% floor, never to 60%.
 ### Auto-Swap to USDT Logic (`swapAndSendUSDT`)
 *   The contract accumulates token taxes internally.
 *   Upon reaching `swapTokensAtAmount` **during a sell**, trigger an internal swap.
-*   Swap path: `[address(this), WBNB, USDT_ADDRESS]`.
+*   Swap path: `[address(this), USDT_ADDRESS]` — a direct hop through our own pair.
 *   Send the resulting USDT to the configured tax receiver.
 *   A `swapping` boolean lock prevents the swap from re-entering the tax logic.
 
@@ -190,7 +190,9 @@ boundary as an executable assertion.
 
 ## 5. TWAP Oracle Contract Spec
 
-A separate contract, e.g. `XenovaTwapOracle`, reading the Xenova/WBNB pair.
+A separate contract, e.g. `XenovaTwapOracle`, reading the Xenova/USDT pair. Pricing
+against USDT is what makes the reported drop a dollar drop; against WBNB it would
+move whenever BNB moved, whether or not Xenova did.
 
 **Storage:** a 50-slot ring buffer of `(priceCumulative, timestamp)` at 30-minute
 granularity — 50 × 30 min = 25h of history. The extra hour past 24 exists so that
@@ -277,11 +279,11 @@ casual testing: it only shows up when the drop happened earlier in the window.
 ### Phase 2: State Variables & Constructor
 1.  State: `pancakeV2Router`, `usdtAddress`, `taxReceiver`, `oracleAddress`, `swapTokensAtAmount`.
 2.  Mappings: `_isExcludedFromFee`, and `automatedMarketMakerPairs`.
-3.  Constructor: mint total supply to deployer, init router, create the WBNB pair
+3.  Constructor: mint total supply to deployer, init router, create the USDT pair
     and register it, set USDT, exclude owner and contract from fees.
 
 > Track pairs in a mapping with an admin setter, not a single `pancakeV2Pair`
-> address. Otherwise anyone can create a Xenova/USDT pair or a V3 pool and sell
+> address. Otherwise anyone can create a Xenova/WBNB pair or a V3 pool and sell
 > there untaxed.
 
 ### Phase 3: Transfer & Tax Logic
@@ -294,7 +296,7 @@ casual testing: it only shows up when the drop happened earlier in the window.
 
 ### Phase 4: Swap Back
 1.  `swapBack()` guarded by the `swapping` lock.
-2.  Approve the router, swap Xenova → WBNB → USDT, forward USDT to `taxReceiver`.
+2.  Approve the router, swap Xenova → USDT, forward USDT to `taxReceiver`.
 3.  Wrap the router call in `try/catch` so an illiquid pool cannot brick transfers.
 
 ### Phase 5: TWAP Oracle

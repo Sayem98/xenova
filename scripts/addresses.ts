@@ -34,9 +34,10 @@ export const ADDRESSES: Record<string, NetworkAddresses> = {
   },
   bscTestnet: {
     router: "0xD99D1c33F9fC3444f8101754aBC46c52416550D1",
-    // Verified on-chain: "Tether USD", 18 decimals, with a live WBNB pool — the
-    // tax route [Xenova, WBNB, USDT] needs that pool to exist to complete.
-    // TESTNET_USDT overrides it if your pool uses a different one.
+    // USDT is now the other half of the trading pair, so a rehearsal needs
+    // enough of it to seed a pool. Run scripts/deployMockUsdt.ts and put the
+    // address it prints in TESTNET_USDT. The fallback below is a real testnet
+    // USDT, kept only for the case where you already hold some.
     usdt:
       process.env.TESTNET_USDT ||
       "0x7ef95a0FEE0Dd31b22626fA2e10Ee6A223F8a684",
@@ -93,16 +94,18 @@ export function addressesFor(network: string): NetworkAddresses {
   return found;
 }
 
-/// Resolves the pair the token created for itself at deploy time.
+/// Resolves the pair the token created for itself at deploy time. `quote` is the
+/// other side of it — USDT, matching what the constructor passes to createPair.
 export async function pairFor(
   ethers: any,
   router: string,
-  token: string
+  token: string,
+  quote: string
 ): Promise<string> {
   const routerContract = await ethers.getContractAt("IPancakeRouter02", router);
   const factory = await ethers.getContractAt(
     "IPancakeFactory",
     await routerContract.factory()
   );
-  return factory.getPair(token, await routerContract.WETH());
+  return factory.getPair(token, quote);
 }

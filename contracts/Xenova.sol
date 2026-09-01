@@ -10,8 +10,10 @@ import {IPriceOracle} from "./interfaces/IPriceOracle.sol";
 
 /// @title Xenova
 /// @notice BEP20 token with a fixed 3% buy tax and a sell tax that scales with
-///         the 24-hour price drop reported by an external oracle. Collected tax
-///         is swapped to USDT and forwarded to the tax receiver.
+///         the 24-hour price drop reported by an external oracle. Trades against
+///         USDT, so the drop the oracle reports is a dollar drop. Collected tax
+///         is swapped to USDT through that same pair and forwarded to the tax
+///         receiver.
 contract Xenova is ERC20, ERC20Burnable, Ownable {
     uint256 public constant BUY_TAX_BPS = 300;
     uint256 public constant MAX_SELL_TAX_BPS = 6000;
@@ -62,8 +64,13 @@ contract Xenova is ERC20, ERC20Burnable, Ownable {
         // much, large enough that the swap is not pure gas waste.
         swapTokensAtAmount = supply / 2000;
 
-        address pair = IPancakeFactory(IPancakeRouter02(router_).factory())
-            .createPair(address(this), IPancakeRouter02(router_).WETH());
+        // Paired against USDT, not WBNB: the oracle prices whatever this pair
+        // holds, and a BNB-denominated price would move the sell tax every time
+        // BNB moved, whether or not Xenova did.
+        address pair = IPancakeFactory(router.factory()).createPair(
+            address(this),
+            usdt_
+        );
         automatedMarketMakerPairs[pair] = true;
         emit AutomatedMarketMakerPairUpdated(pair, true);
 
@@ -159,10 +166,9 @@ contract Xenova is ERC20, ERC20Burnable, Ownable {
 
         _swapping = true;
 
-        address[] memory path = new address[](3);
+        address[] memory path = new address[](2);
         path[0] = address(this);
-        path[1] = router.WETH();
-        path[2] = usdt;
+        path[1] = usdt;
 
         _approve(address(this), address(router), amount);
 

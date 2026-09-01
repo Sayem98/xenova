@@ -62,11 +62,15 @@ permanently unadministrable.
 > `code.length > 0`. This is fine and expected — the contract has no "EOA only"
 > guard anywhere, deliberately. Plain ERC-20 transfers to it work normally.
 
-**Fund the owner with BNB.** As of writing it holds **0.00000108 BNB** — not
-enough for a single transaction. It needs gas for every step below *plus*
-whatever BNB goes into the liquidity pool.
+**Fund the owner with BNB for gas.** As of writing it holds **0.00000108 BNB**
+— not enough for a single transaction. Gas only: the pool is seeded with USDT,
+not BNB.
 
-**Decide the liquidity.** `LP_TOKENS` and `LP_BNB` have no defaults on mainnet;
+**Fund the owner with USDT.** The pair is Xenova/USDT, so the owner wallet must
+hold the full `LP_USDT` amount before §6. Mainnet USDT is
+`0x55d398326f99059fF775485246999027B3197955` (18 decimals).
+
+**Decide the liquidity.** `LP_TOKENS` and `LP_USDT` have no defaults on mainnet;
 the script refuses to run without both, on purpose.
 
 **The tax receiver** is `0xc8Ba…939A`, hardcoded in `scripts/addresses.ts`.
@@ -86,13 +90,15 @@ the gas price observed at the time of writing:
 | --- | --- | --- | --- |
 | Deploy Xenova | 4,683,702 | 0.000234 | 0.0141 |
 | `approve` | 46,423 | 0.000002 | 0.0001 |
-| `addLiquidityETH` | 257,488 | 0.000013 | 0.0008 |
+| `approve` (USDT) | 46,423 | 0.000002 | 0.0001 |
+| `addLiquidity` | 257,488 | 0.000013 | 0.0008 |
 | Deploy oracle | 680,786 | 0.000034 | 0.0020 |
 | `setOracle` | 47,267 | 0.000002 | 0.0001 |
 | **Total one-time** | **5,715,666** | **0.00029** | **0.0171** |
 
 Gas is cheap right now but can spike. **Fund the owner with ~0.05 BNB for
-operations**, well clear of any realistic spike, plus your liquidity BNB.
+operations**, well clear of any realistic spike. The liquidity itself is USDT and
+costs no BNB beyond gas.
 
 Ongoing: the keeper spends 106,400 gas per update, 48 times a day —
 **0.00026 BNB/day (~0.008 BNB/month)** at 0.05 gwei, ~0.015 BNB/day at 3 gwei.
@@ -109,7 +115,7 @@ Set in `.env`:
 DEPLOYER_PRIVATE_KEY=<the owner key>
 BSCSCAN_API_KEY=<your key>
 LP_TOKENS=<decided in §2>
-LP_BNB=<decided in §2>
+LP_USDT=<decided in §2>
 # TAX_RECEIVER=   # leave blank; the receiver is in scripts/addresses.ts
 ```
 
@@ -175,12 +181,14 @@ TOKEN_ADDRESS=0x… npx hardhat run scripts/addLiquidity.ts --network bsc
 ```
 
 The script checks the signer is the owner, that balances cover `LP_TOKENS` and
-`LP_BNB`, and that the owner is fee-excluded, before sending anything. It prints
-the resulting reserves.
+`LP_USDT`, and that the owner is fee-excluded, before sending anything. It sends
+two approvals — Xenova and USDT — then one `addLiquidity`, and prints the
+resulting reserves.
 
-> The initial price is set entirely by your ratio. 1,000,000 Xenova against
-> 10 BNB means 1 BNB = 100,000 Xenova. Nothing enforces a "correct" price —
-> whatever you seed is the opening price.
+> The initial price is set entirely by your ratio, and because the other side is
+> USDT it is now a dollar price directly. 1,000,000 Xenova against 10,000 USDT
+> means 1 Xenova = $0.01. Nothing enforces a "correct" price — whatever you seed
+> is the opening price, and it is also the first price the oracle records.
 
 ## 7. Oracle and keeper
 

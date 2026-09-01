@@ -10,16 +10,16 @@ const SLOTS = 50;
 const BASE = 1000n;
 const price = (p: number) => BigInt(Math.round(p * 1000));
 
+const XENOVA = ethers.getAddress("0x" + "11".repeat(20));
+const USDT = ethers.getAddress("0x" + "22".repeat(20));
+
 async function deployFixture() {
   const [owner] = await ethers.getSigners();
 
-  const xenova = ethers.getAddress("0x" + "11".repeat(20));
-  const wbnb = ethers.getAddress("0x" + "22".repeat(20));
-
   const MockPair = await ethers.getContractFactory("MockPair");
-  const pair = await MockPair.deploy(xenova, wbnb);
+  const pair = await MockPair.deploy(XENOVA, USDT);
 
-  return { owner, pair, xenova, wbnb };
+  return { owner, pair, xenova: XENOVA, usdt: USDT };
 }
 
 async function deployOracleAt(startPrice: number) {
@@ -32,13 +32,29 @@ async function deployOracleAt(startPrice: number) {
   return { pair, oracle };
 }
 
+/// The same pool with the tokens the other way round, so Xenova is token1 and
+/// the oracle has to read price1CumulativeLast instead of price0CumulativeLast.
+/// Reserves are passed reversed too, which keeps `price()` meaning the same
+/// thing in both orientations.
+async function deployReversedOracleAt(startPrice: number) {
+  const MockPair = await ethers.getContractFactory("MockPair");
+  const pair = await MockPair.deploy(USDT, XENOVA);
+  await pair.setReserves(price(startPrice), BASE);
+
+  const XenovaTwapOracle = await ethers.getContractFactory("XenovaTwapOracle");
+  const oracle = await XenovaTwapOracle.deploy(await pair.getAddress(), XENOVA);
+
+  return { pair, oracle };
+}
+
 /// Fills the ring buffer with 30-minute observations, optionally stepping the
 /// price partway through. `stepAfterHours` is measured from the first
 /// observation, so it reads the same way the test names do.
 async function fillHistory(
   pair: any,
   oracle: any,
-  step?: { afterHours: number; toPrice: number }
+  step?: { afterHours: number; toPrice: number },
+  reversed = false
 ) {
   const start = await time.latest();
   let stepped = false;
@@ -49,7 +65,10 @@ async function fillHistory(
     if (step && !stepped) {
       const elapsedHours = ((await time.latest()) - start) / 3600;
       if (elapsedHours >= step.afterHours) {
-        await pair.setReserves(BASE, price(step.toPrice));
+        const p = price(step.toPrice);
+        await (reversed
+          ? pair.setReserves(p, BASE)
+          : pair.setReserves(BASE, p));
         stepped = true;
       }
     }
@@ -133,6 +152,27 @@ describe("XenovaTwapOracle", () => {
       const [dropBps] = await oracle.get24hPriceDropBps();
       expect(Number(dropBps)).to.be.lessThanOrEqual(10000);
       expect(Number(dropBps)).to.be.greaterThan(9000);
+    });
+
+    // Whether Xenova sorts above or below USDT decides which accumulator the
+    // oracle has to read, and that is settled by the deploy address — a coin
+    // flip. Both orientations have to report the same drop.
+    it("reports the same drop when Xenova is token1", async () => {
+      const { pair, oracle } = await deployOracleAt(1.0);
+      await fillHistory(pair, oracle, { afterHours: 23, toPrice: 0.8 });
+      const [expected] = await oracle.get24hPriceDropBps();
+
+      const reversed = await deployReversedOracleAt(1.0);
+      await fillHistory(
+        reversed.pair,
+        reversed.oracle,
+        { afterHours: 23, toPrice: 0.8 },
+        true
+      );
+      const [actual] = await reversed.oracle.get24hPriceDropBps();
+
+      expect(Number(actual)).to.be.closeTo(2000, 50);
+      expect(Number(actual)).to.be.closeTo(Number(expected), 50);
     });
   });
 

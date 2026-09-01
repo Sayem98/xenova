@@ -8,7 +8,6 @@ async function deployFixture() {
   const [owner, user, other, taxReceiver] = await ethers.getSigners();
 
   const MockERC20 = await ethers.getContractFactory("MockERC20");
-  const wbnb = await MockERC20.deploy("Wrapped BNB", "WBNB", 0n);
   const usdt = await MockERC20.deploy(
     "Tether USD",
     "USDT",
@@ -19,10 +18,7 @@ async function deployFixture() {
   const factory = await MockFactory.deploy();
 
   const MockRouter = await ethers.getContractFactory("MockRouter");
-  const router = await MockRouter.deploy(
-    await factory.getAddress(),
-    await wbnb.getAddress()
-  );
+  const router = await MockRouter.deploy(await factory.getAddress());
 
   const Xenova = await ethers.getContractFactory("Xenova");
   const token = await Xenova.deploy(
@@ -32,9 +28,10 @@ async function deployFixture() {
     owner.address
   );
 
+  // The token pairs itself against USDT in its constructor.
   const pairAddress = await factory.getPair(
     await token.getAddress(),
-    await wbnb.getAddress()
+    await usdt.getAddress()
   );
 
   // The router pays out USDT on a swap, so it needs a balance to pay from.
@@ -69,16 +66,12 @@ describe("Xenova", () => {
         await ethers.getSigners();
 
       const MockERC20 = await ethers.getContractFactory("MockERC20");
-      const wbnb = await MockERC20.deploy("Wrapped BNB", "WBNB", 0n);
       const usdt = await MockERC20.deploy("Tether USD", "USDT", 0n);
 
       const MockFactory = await ethers.getContractFactory("MockFactory");
       const factory = await MockFactory.deploy();
       const MockRouter = await ethers.getContractFactory("MockRouter");
-      const router = await MockRouter.deploy(
-        await factory.getAddress(),
-        await wbnb.getAddress()
-      );
+      const router = await MockRouter.deploy(await factory.getAddress());
 
       const Xenova = await ethers.getContractFactory("Xenova");
       const token = await Xenova.deploy(

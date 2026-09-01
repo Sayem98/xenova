@@ -36,14 +36,12 @@ contract MockFactory {
 ///      mock router cannot reproduce it.
 contract MockRouter {
     address public immutable factory;
-    address public immutable WETH;
 
     uint256 public rate = 1e18;
     bool public shouldRevert;
 
-    constructor(address factory_, address weth_) {
+    constructor(address factory_) {
         factory = factory_;
-        WETH = weth_;
     }
 
     function setRate(uint256 rate_) external {

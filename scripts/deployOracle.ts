@@ -14,7 +14,7 @@ async function main() {
     throw new Error("Set TOKEN_ADDRESS to the deployed Xenova address.");
   }
 
-  const { router } = addressesFor(network.name);
+  const { router, usdt } = addressesFor(network.name);
 
   const [signer] = await ethers.getSigners();
   if (!signer) {
@@ -31,9 +31,9 @@ async function main() {
     );
   }
 
-  const pairAddress = await pairFor(ethers, router, tokenAddress);
+  const pairAddress = await pairFor(ethers, router, tokenAddress, usdt);
   if (pairAddress === ethers.ZeroAddress) {
-    throw new Error("No Xenova/WBNB pair found. Was the token deployed here?");
+    throw new Error("No Xenova/USDT pair found. Was the token deployed here?");
   }
 
   // An oracle started on an empty pool records observations of a price that does

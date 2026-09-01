@@ -46,7 +46,7 @@ async function main() {
   // Read the state back from the chain rather than trusting the arguments we
   // just sent — this is the check that the supply really landed on OWNER.
   const supply = await token.totalSupply();
-  const pair = await pairFor(ethers, router, address);
+  const pair = await pairFor(ethers, router, address, usdt);
 
   console.log(`Xenova       ${address}`);
   console.log(`pair         ${pair}`);
