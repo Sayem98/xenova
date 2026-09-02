@@ -77,7 +77,9 @@ the script refuses to run without both, on purpose.
 Nothing to decide, and nothing to set in `.env`.
 
 **Have the keeper host ready before you start.** See §7 — the token's headline
-feature does not work without it.
+feature does not work without it. [deploy/README.md](deploy/README.md) is the
+full Ubuntu VM setup; do all of it except the final start, so the keeper is one
+command away the moment the oracle exists.
 
 **A BscScan API key** for verification.
 
@@ -217,6 +219,8 @@ separate funded hot wallet and keep the owner key offline.
 
 Run it under something that restarts on failure (systemd, pm2, a container with
 a restart policy). Do not run it from a laptop.
+[deploy/README.md](deploy/README.md) is that setup for an Ubuntu VM, start to
+finish — systemd unit, the throwaway keeper wallet, and the reboot test.
 
 ### Why it polls every 5 minutes
 

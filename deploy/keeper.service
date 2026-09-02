@@ -1,0 +1,30 @@
+[Unit]
+Description=Xenova TWAP oracle keeper
+After=network-online.target
+Wants=network-online.target
+# Never stop retrying. A keeper that gives up after five fast failures is a
+# keeper that is dead by morning with no one watching.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=keeper
+Group=keeper
+WorkingDirectory=/opt/xenova
+# Calls the local hardhat binary, not npx: no registry lookup on a restart, and
+# nothing to resolve if the network is still coming up. --no-compile because the
+# artifacts are built once during setup; recompiling on every restart would run
+# solc on a 1 GB VM for no reason.
+ExecStart=/opt/xenova/node_modules/.bin/hardhat run --no-compile scripts/keeper.ts --network bsc
+Restart=always
+RestartSec=30
+
+# The box holds a hot key, so give the process nothing it does not need.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/xenova
+
+[Install]
+WantedBy=multi-user.target

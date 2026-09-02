@@ -146,6 +146,9 @@ supply, owner, current tax tier, accrued tax, oracle history, pair reserves:
 TOKEN_ADDRESS=0x… npx hardhat run scripts/status.ts --network bsc
 ```
 
+Step 4 runs forever, so it needs a host that is not your laptop.
+[deploy/README.md](deploy/README.md) sets one up on an Ubuntu VM under systemd.
+
 Step 4 is not optional. The oracle only records a price when someone calls
 `update()`, and nothing on chain does that by itself. Until the ring buffer holds
 50 observations (~25 hours) `get24hPriceDropBps()` returns `0` and **the sell tax
