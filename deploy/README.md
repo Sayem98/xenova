@@ -8,7 +8,7 @@ Compute Engine. Only §1 is GCP-specific; the rest is any Ubuntu box.
 ([`deployOracle.ts`](../scripts/deployOracle.ts)). The oracle has to exist before
 the keeper has anything to call. Do the whole setup below *before* deploying the
 oracle, leaving only `ORACLE_ADDRESS` blank — then paste it in and start the
-service the same minute. The ~25-hour cold start begins when the keeper does, and
+service the same minute. The ~24-hour cold start begins when the keeper does, and
 every hour of gap is an hour added to the wait before you can announce
 ([§0 of the mainnet guide](../how_to_deploy_on_mainnet.md)).
 
@@ -28,7 +28,7 @@ at the BNB sitting in that one wallet.
 
 | Setting | Value | Why |
 | --- | --- | --- |
-| Machine type | `e2-micro` or `e2-small` | The keeper idles at ~150 MB and one HTTPS call every 5 minutes |
+| Machine type | `e2-micro` or `e2-small` | The keeper idles at ~150 MB and makes a few HTTPS calls every 10 minutes |
 | Provisioning | **Standard — not Spot** | GCP reclaims Spot VMs within 24h. A keeper that dies daily is not a keeper |
 | Image | Ubuntu 22.04 or 24.04 LTS | |
 | Disk | 20 GB | `node_modules` + artifacts run ~600 MB |
@@ -90,8 +90,11 @@ resolves:
 node -e "const w=require('ethers').Wallet.createRandom(); console.log(w.address, w.privateKey)"
 ```
 
-Fund the printed address with **~0.05 BNB**. At 48 updates a day and 106,400 gas
-each that is over a year at 0.05 gwei, roughly 3 months at 3 gwei.
+Fund the printed address with **~0.05 BNB**. At 144 updates a day that lasts
+about 2 months at 0.05 gwei on the first-day cost of 106,400 gas per update, and
+about 4 months once the buffer has wrapped and updates cost roughly half. At
+3 gwei it lasts one to two days — if gas spikes, top up or expect the keeper to
+run dry.
 
 ## 5. `.env` on the VM
 
@@ -137,13 +140,13 @@ network  bsc
 oracle   0x…
 keeper   0x…
 balance  0.05 BNB
-slots    1 / 50
-polling  every 5 minutes; the oracle records one per 30.
+slots    1 / 146
+timing   one update every 10 min, sent 3s after each is allowed; next in 412s.
 ```
 
-After that, **one `updated 0x<txhash>` line every 30 minutes and silence in
-between**. Refused ticks print nothing by design, so quiet is healthy and a gap
-past 40 minutes is not.
+After that, **one `updated 0x<txhash>` line every 10 minutes and silence in
+between**. The keeper sleeps until each update is due and prints only the ones
+it records, so quiet is healthy and a gap past 15 minutes is not.
 
 Then do the reboot test once, now, instead of discovering it at 3am:
 
@@ -158,7 +161,7 @@ systemctl is-active keeper      # → active
 | Task | Command |
 | --- | --- |
 | Watch the log | `journalctl -u keeper -f` |
-| Count yesterday's updates | `journalctl -u keeper --since -24h \| grep -c updated` → expect ~48 |
+| Count yesterday's updates | `journalctl -u keeper --since -24h \| grep -c updated` → expect ~143 |
 | Restart | `sudo systemctl restart keeper` |
 | Top up gas | Send BNB to the keeper address in the banner |
 | Ship a code change | `sudo -u keeper git pull && sudo -u keeper yarn install && sudo -u keeper yarn compile && sudo systemctl restart keeper` |

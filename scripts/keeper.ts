@@ -10,53 +10,90 @@ import { ethers, network } from "hardhat";
 /// pinned at its 3% floor forever — the dynamic tax simply never activates.
 ///
 /// The call is permissionless, so this needs a funded key but not the owner's.
-/// Roughly 48 recorded updates a day at 106,400 gas each — about 0.00026 BNB/day
-/// at 0.05 gwei, 0.005 BNB/day at 1 gwei.
+/// Roughly 144 recorded updates a day at up to 106,400 gas each — about
+/// 0.0008 BNB/day at 0.05 gwei, 0.015 BNB/day at 1 gwei.
 ///
-/// Polled far more often than the oracle's own 30-minute PERIOD, and that is
-/// deliberate. get24hPriceDropBps() looks back 48 observations, not 24 hours, so
-/// the two only agree while observations land 30 minutes apart. At a 30-minute
-/// poll a tick arriving seconds early is refused and that observation slips a
-/// full period late, permanently widening the window the tax tiers are read
-/// against. Polling every 5 minutes keeps each update within 5 minutes of the
-/// earliest moment it is allowed.
-///
-/// Polling this fast is nearly free: a refused call never becomes a transaction,
-/// because ethers estimates gas first and the estimate reverts before anything
-/// is broadcast. The cost is one RPC call.
-const POLL_MS = 5 * 60 * 1000;
+/// Timed, not polled. get24hPriceDropBps() looks back 144 observations, not 24
+/// hours, so the two only agree while observations land PERIOD apart. Every
+/// second an update lands late stretches that lookback for good. A fixed poll
+/// interval is late by up to a full interval each time: a tick a second before
+/// the mark is refused and has to wait for the next one. So instead the keeper
+/// reads when the last observation was taken and sleeps until just after the
+/// next one is allowed, keeping observations ~PERIOD + MARGIN_S apart.
 
-/// update() reverts with "too soon" if called inside the 30-minute window. At
-/// this poll rate that is the expected outcome of five ticks in six, not a
-/// failure.
+/// Seconds past the earliest allowed moment to send the update. Covers the
+/// latest block trailing real time by a block or so.
+const MARGIN_S = 3;
+
+/// update() reverts with "too soon" if called inside the period. With timed
+/// wake-ups that only happens when the RPC lags behind the chain, so it is
+/// retried quickly rather than logged.
 const TOO_SOON = "too soon";
+const TOO_SOON_RETRY_MS = 5_000;
 
-/// setInterval does not wait for the previous tick. A transaction still pending
-/// when the next one fires would let it estimate against pre-update state, pass,
-/// and broadcast a second update — which lands after the first and reverts on
-/// chain, spending real gas on exactly what the estimate is there to prevent.
-let inFlight = false;
+/// How long to wait for an update to confirm. BSC confirms in seconds, so past
+/// this the transaction was most likely dropped — a public RPC can accept it and
+/// never pass it on. Without a limit the keeper would wait on it forever.
+const CONFIRM_TIMEOUT_MS = 2 * 60_000;
 
-async function tick(oracle: any) {
-  if (inFlight) return;
-  inFlight = true;
+/// Anything else (RPC hiccup, out of gas, no funds) is retried on this delay.
+/// A missed update degrades to a stale reading, which the token already treats
+/// as a 0% drop, so retrying calmly beats crashing.
+const ERROR_RETRY_MS = 30_000;
 
-  try {
-    const tx = await oracle.update();
-    await tx.wait();
-    console.log(`${new Date().toISOString()}  updated  ${tx.hash}`);
-  } catch (error: any) {
-    const message = String(error?.message ?? error);
-    // Silent: logging the refused ticks would bury the ~48 real updates under
-    // ~240 lines of noise a day. The quiet is what makes the log readable as a
-    // heartbeat — a line every 30 minutes is healthy, a gap is worth a look.
-    if (message.includes(TOO_SOON)) return;
-    // Anything else (RPC hiccup, out of gas, no funds) is worth seeing, but it
-    // must not kill the loop — a missed update degrades to a stale reading,
-    // which the token already treats as a 0% drop.
-    console.error(`${new Date().toISOString()}  update failed: ${message}`);
-  } finally {
-    inFlight = false;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/// Chain seconds until update() is allowed, plus the margin. Measured against
+/// the latest block rather than this machine's clock, because block time is
+/// what the oracle's "too soon" check compares against.
+async function secondsUntilDue(oracle: any, period: number): Promise<number> {
+  const [, lastAt] = await oracle.observations(await oracle.head());
+  const latest = await ethers.provider.getBlock("latest");
+  if (!latest) throw new Error("RPC returned no latest block");
+  return Number(lastAt) + period + MARGIN_S - latest.timestamp;
+}
+
+/// One update after another, never two at once: each pass waits for the
+/// previous transaction to confirm before working out the next wake-up.
+async function run(oracle: any, signer: any, period: number): Promise<never> {
+  for (;;) {
+    let sent: string | undefined;
+    try {
+      const wait = await secondsUntilDue(oracle, period);
+      // Capped at one period, so a bad reading can never park the keeper for
+      // longer than a single missed update.
+      if (wait > 0) await sleep(Math.min(wait, period) * 1000);
+
+      // Sent straight after waking, without re-checking the clock: if the
+      // latest block were stuck, re-checking would keep the keeper asleep.
+      // A refused call never becomes a transaction — ethers estimates gas
+      // first, and the estimate reverts before anything is broadcast.
+      //
+      // Pinned to the confirmed nonce rather than the default "pending" one.
+      // After a timeout the old transaction may still be in the mempool; with
+      // "pending" every retry would queue behind it, and once it confirmed the
+      // whole queue would land and revert "too soon", each paying gas. With the
+      // confirmed nonce a retry replaces a dropped transaction, or is refused
+      // as a duplicate of one still waiting — never stacked.
+      const tx = await oracle.update({ nonce: await signer.getNonce("latest") });
+      sent = tx.hash;
+      await tx.wait(1, CONFIRM_TIMEOUT_MS);
+      // Only recorded updates are logged, so the log reads as a heartbeat: a
+      // line every 10 minutes is healthy, a gap is worth a look.
+      console.log(`${new Date().toISOString()}  updated  ${tx.hash}`);
+    } catch (error: any) {
+      const message = String(error?.message ?? error);
+      if (message.includes(TOO_SOON)) {
+        await sleep(TOO_SOON_RETRY_MS);
+        continue;
+      }
+      const reason =
+        error?.code === "TIMEOUT"
+          ? `not confirmed after ${CONFIRM_TIMEOUT_MS / 60_000} min, resending  ${sent}`
+          : message;
+      console.error(`${new Date().toISOString()}  update failed: ${reason}`);
+      await sleep(ERROR_RETRY_MS);
+    }
   }
 }
 
@@ -72,6 +109,8 @@ async function main() {
   }
 
   const oracle = await ethers.getContractAt("XenovaTwapOracle", oracleAddress);
+  const period = Number(await oracle.PERIOD());
+  const due = await secondsUntilDue(oracle, period);
 
   console.log(`network  ${network.name}`);
   console.log(`oracle   ${oracleAddress}`);
@@ -81,13 +120,13 @@ async function main() {
   )} BNB`);
   console.log(`slots    ${await oracle.count()} / ${await oracle.SLOTS()}`);
   console.log(
-    `polling  every ${POLL_MS / 60000} minutes; the oracle records one per 30.`
+    `timing   one update every ${period / 60} min, sent ${MARGIN_S}s after ` +
+      `each is allowed; next in ${Math.max(due, 0)}s.`
   );
   console.log(`         Only recorded updates are logged. Ctrl-C to stop.`);
   console.log("");
 
-  await tick(oracle);
-  setInterval(() => void tick(oracle), POLL_MS);
+  await run(oracle, signer, period);
 }
 
 main().catch((error) => {

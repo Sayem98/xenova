@@ -4,7 +4,7 @@ import { assertTestnetOnly } from "./addresses";
 
 /// Testnet only. Points the token at a MockPriceOracle whose drop you set by
 /// hand, so the sell-tax tiers can be exercised in minutes instead of waiting
-/// ~25 hours for the real TWAP oracle's ring buffer to fill.
+/// ~24 hours for the real TWAP oracle's ring buffer to fill.
 ///
 ///   TOKEN_ADDRESS=0x… DROP_BPS=1000 npx hardhat run scripts/mockOracle.ts --network bscTestnet
 ///

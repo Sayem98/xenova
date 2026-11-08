@@ -8,9 +8,9 @@ import { addressesFor, pairFor } from "./addresses";
 ///   TOKEN_ADDRESS=0x… npx hardhat run scripts/status.ts --network bscTestnet
 ///
 /// Sends no transactions and needs no signer beyond an RPC connection.
-/// The keeper records every 30 minutes. The slack absorbs block-time jitter and
-/// a slow confirmation; past this it has missed at least one window.
-const LATE_AFTER_MINUTES = 40;
+/// The keeper records once per oracle PERIOD. This slack on top absorbs a slow
+/// confirmation or a retry; past it the keeper has missed at least one window.
+const LATE_SLACK_MINUTES = 5;
 
 function line(label: string, value: unknown) {
   console.log(`  ${label.padEnd(20)} ${value}`);
@@ -98,15 +98,16 @@ async function main() {
       const [, updatedAt] = await twap.observations(await twap.head());
       const ageMinutes = Number(chainNow - updatedAt) / 60;
       const staleMinutes = Number(await token.ORACLE_STALE_AFTER()) / 60;
+      const periodMinutes = Number(await twap.PERIOD()) / 60;
 
       line("last update", `${ageMinutes.toFixed(0)} min ago`);
       line(
         "keeper",
         ageMinutes >= staleMinutes
           ? `DEAD — past the ${staleMinutes} min window, sells are at the 3% floor`
-          : ageMinutes >= LATE_AFTER_MINUTES
+          : ageMinutes >= periodMinutes + LATE_SLACK_MINUTES
           ? `late — missed a window, counts as dead at ${staleMinutes} min`
-          : "ok — records every 30 min"
+          : `ok — records every ${periodMinutes} min`
       );
     } catch {
       line("type", "not the TWAP oracle (a mock?)");

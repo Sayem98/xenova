@@ -2,8 +2,8 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
 
-const HALF_HOUR = 30 * 60;
-const SLOTS = 50;
+const PERIOD = 10 * 60;
+const SLOTS = 146;
 
 // Price of the token is reserve1/reserve0, so a fixed reserve0 lets reserve1
 // stand in for the price directly: 1250 -> $1.25, 1000 -> $1.00, 800 -> $0.80.
@@ -47,7 +47,7 @@ async function deployReversedOracleAt(startPrice: number) {
   return { pair, oracle };
 }
 
-/// Fills the ring buffer with 30-minute observations, optionally stepping the
+/// Fills the ring buffer with 10-minute observations, optionally stepping the
 /// price partway through. `stepAfterHours` is measured from the first
 /// observation, so it reads the same way the test names do.
 async function fillHistory(
@@ -60,7 +60,7 @@ async function fillHistory(
   let stepped = false;
 
   for (let i = 1; i < SLOTS; i++) {
-    await time.increase(HALF_HOUR);
+    await time.increase(PERIOD);
 
     if (step && !stepped) {
       const elapsedHours = ((await time.latest()) - start) / 3600;
@@ -78,12 +78,27 @@ async function fillHistory(
 }
 
 describe("XenovaTwapOracle", () => {
+  describe("sizing", () => {
+    // SLOTS is derived from PERIOD on chain, and that division rounds down
+    // silently. A PERIOD that does not divide 24h evenly would compile and
+    // quietly shorten the lookback, so pin the span here instead.
+    it("looks back exactly 24h", async () => {
+      const { oracle } = await deployOracleAt(1.0);
+      const period = await oracle.PERIOD();
+      const slots = await oracle.SLOTS();
+
+      expect(period).to.equal(PERIOD);
+      expect(slots).to.equal(SLOTS);
+      expect((slots - 2n) * period).to.equal(24n * 60n * 60n);
+    });
+  });
+
   describe("cold start", () => {
     it("reports no drop until the buffer spans a full 24h", async () => {
       const { pair, oracle } = await deployOracleAt(1.25);
 
       for (let i = 1; i < SLOTS - 1; i++) {
-        await time.increase(HALF_HOUR);
+        await time.increase(PERIOD);
         await oracle.update();
       }
 
@@ -97,13 +112,13 @@ describe("XenovaTwapOracle", () => {
   describe("keeper", () => {
     it("rejects an update inside the period", async () => {
       const { oracle } = await deployOracleAt(1.0);
-      await time.increase(HALF_HOUR - 60);
+      await time.increase(PERIOD - 60);
       await expect(oracle.update()).to.be.revertedWith("too soon");
     });
 
     it("accepts an update once the period has passed", async () => {
       const { oracle } = await deployOracleAt(1.0);
-      await time.increase(HALF_HOUR);
+      await time.increase(PERIOD);
       await expect(oracle.update()).to.not.be.reverted;
       expect(await oracle.count()).to.equal(2);
     });
@@ -202,7 +217,7 @@ describe("XenovaTwapOracle", () => {
 
       expect(before).to.equal(0);
       // The slam contributes only the seconds it actually persists, so the
-      // 30-minute average absorbs almost all of it.
+      // 10-minute average absorbs almost all of it.
       expect(Number(after)).to.be.lessThan(500);
     });
   });

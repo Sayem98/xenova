@@ -194,11 +194,14 @@ A separate contract, e.g. `XenovaTwapOracle`, reading the Xenova/USDT pair. Pric
 against USDT is what makes the reported drop a dollar drop; against WBNB it would
 move whenever BNB moved, whether or not Xenova did.
 
-**Storage:** a 50-slot ring buffer of `(priceCumulative, timestamp)` at 30-minute
-granularity — 50 × 30 min = 25h of history. The extra hour past 24 exists so that
-both ends of the comparison below are always available.
+**Storage:** a 146-slot ring buffer of `(priceCumulative, timestamp)` at
+10-minute granularity — 146 × 10 min = 24h20m of history. The two slots past 24h
+exist so that both ends of the comparison below are always available. `SLOTS` is
+derived from `PERIOD` (`24 hours / PERIOD + 2`), so `PERIOD` must divide 24 hours
+evenly. (The period was 30 minutes with 50 slots until 2026-11-08; it was cut to
+10 so the sell tax reacts to a crash faster.)
 
-**`update()`** — permissionless, callable at most once per 30 minutes. It writes
+**`update()`** — permissionless, callable at most once per 10 minutes. It writes
 the pair's current cumulative price into the next slot. The keeper **cannot
 choose the value**; it can only refuse to call, which degrades to the 3% floor
 via the staleness check.
@@ -219,12 +222,12 @@ DexScreener/DexTools next to the "1d" timeframe. That is `price now` compared to
 `price 24h ago` — *not* the price now compared to a 24-hour average. Those are
 different numbers and they diverge badly. See the worked example below.
 
-Compare two 30-minute averages: one ending now, one ending 24 hours ago.
+Compare two 10-minute averages: one ending now, one ending 24 hours ago.
 
 ```
-// slot[0] = newest snapshot, slot[48] ~= 24h older, slot[49] ~= 24h30m older
-twapNow  = (cumNow       - cum[slot 1])  / (tNow       - t[slot 1])
-twapThen = (cum[slot 48] - cum[slot 49]) / (t[slot 48] - t[slot 49])
+// slot[0] = newest snapshot, slot[144] ~= 24h older, slot[145] ~= 24h10m older
+twapNow  = (cumNow        - cum[slot 1])   / (tNow        - t[slot 1])
+twapThen = (cum[slot 144] - cum[slot 145]) / (t[slot 144] - t[slot 145])
 
 dropBps = twapNow >= twapThen ? 0 : (twapThen - twapNow) * 10000 / twapThen
 ```
@@ -234,12 +237,14 @@ snapshot gives a zero-length window whenever the read happens in the same block
 as a keeper update — the average computes as 0 and the drop comes out at a full
 **100%**, handing every seller in that block the maximum tax. Starting one slot
 further back guarantees at least one full `PERIOD` of span, because `update()`
-enforces that spacing. The window is then 30–60 minutes rather than exactly 30,
+enforces that spacing. The window is then 10–20 minutes rather than exactly 10,
 which does not weaken the manipulation resistance.
 
-Averaging each endpoint over 30 minutes is what keeps this safe. A flash loan
+Averaging each endpoint over 10 minutes is what keeps this safe. A flash loan
 lives for one transaction, so it cannot move either figure. Faking a 0% drop
-requires holding the price up for 30 minutes across many blocks.
+requires holding the price up for 10 minutes across many blocks — a third of
+what the original 30-minute period demanded, which is the price paid for a tax
+that reacts to a crash within ~20 minutes.
 
 **Worked example — why the average is the wrong reference.**
 
@@ -259,11 +264,18 @@ casual testing: it only shows up when the drop happened earlier in the window.
 **Never report a negative drop.** If the price rose over 24 hours, `dropBps` is
 `0` and the sell tax is the 3% floor.
 
-**Cold start:** a new token has no history. Until all 50 slots are populated
-(~25 hours), return `dropBps = 0`, so the first day runs at the 3% floor.
+**Cold start:** a new token has no history. Until all 146 slots are populated
+(~24 hours), return `dropBps = 0`, so the first day runs at the 3% floor.
 
-**Keeper cost:** 48 updates/day at roughly 30–40k gas each ≈ 1.9M gas/day
-(~0.0019 BNB/day at 1 gwei). Buffer depth does not change update frequency.
+**Keeper cost:** 144 updates/day. Measured: ~106k gas per update while the buffer
+fills, ~55k once it wraps and each update overwrites a slot — up to ~15.3M
+gas/day (~0.015 BNB/day at 1 gwei) on the first day, about half after.
+
+**Keeper timing:** the lookback is 144 *observations*, so it only equals 24 hours
+while updates land exactly `PERIOD` apart. The keeper therefore does not poll on
+a fixed interval (which lands each update up to one interval late); it reads the
+last observation's block time and sleeps until 3 seconds after the next update
+is allowed.
 
 ## 6. Implementation Steps
 
@@ -303,7 +315,7 @@ casual testing: it only shows up when the drop happened earlier in the window.
 1.  Implement `XenovaTwapOracle` per §5.
 2.  Deploy after the pair exists and has liquidity.
 3.  Point the token at it via `setOracle`.
-4.  Run the keeper (30-minute cadence) from launch, so history starts filling immediately.
+4.  Run the keeper (10-minute cadence) from launch, so history starts filling immediately.
 
 ## 7. Testing Strategy (Hardhat)
 
@@ -336,8 +348,8 @@ reverts.
     *   The same call at **60% or more** slippage **succeeds**.
 
 **Oracle tests**
-13. Cold start: fewer than 50 slots filled → `dropBps == 0`.
-14. `update()` twice within 30 minutes → second call rejected.
+13. Cold start: fewer than 146 slots filled → `dropBps == 0`.
+14. `update()` twice within 10 minutes → second call rejected.
 15. Single-transaction price pump does not move `twapNow`.
 16. Accumulator wrap-around handled correctly.
 17. **24h-ago, not 24h-average.** Price flat at $1.25, steps to $1.00 at t−23h,

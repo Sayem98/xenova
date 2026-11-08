@@ -9,21 +9,24 @@ import {IPriceOracle} from "../interfaces/IPriceOracle.sol";
 ///         measured the way a DEX chart reports it: the price now against the
 ///         price 24 hours ago.
 ///
-/// @dev Both ends of the comparison are 30-minute time-weighted averages, not
-///      spot prices. A flash loan lives for one transaction and so cannot move
-///      either figure; faking a 0% drop means holding the price up for 30
-///      minutes across many blocks.
+/// @dev Both ends of the comparison are time-weighted averages over at least
+///      10 minutes, not spot prices. A flash loan lives for one transaction and
+///      so cannot move either figure; faking a 0% drop means holding the price
+///      up for 10 minutes across many blocks.
 ///
 ///      Note this is deliberately NOT "price now vs. the 24-hour average". Those
 ///      differ sharply when the drop happened earlier in the window. A token at
 ///      $1.25 that fell to $1.00 twenty-three hours ago and stayed there reads
 ///      -20% here and on a DEX chart, but only -1% against a 24-hour average.
 contract XenovaTwapOracle is IPriceOracle {
-    /// @dev 50 slots x 30 min = 25h. The extra hour past 24 is what makes the
-    ///      "24 hours ago" window available: it needs two stored observations,
-    ///      48 and 49 slots back.
-    uint256 public constant SLOTS = 50;
-    uint256 public constant PERIOD = 30 minutes;
+    uint256 public constant PERIOD = 10 minutes;
+    /// @dev 24h / 10 min = 144 periods, plus 2 = 146 slots (24h20m). The two
+    ///      extra slots are what make the "24 hours ago" window available: it
+    ///      needs two stored observations, 144 and 145 slots back. Derived from
+    ///      PERIOD so the two cannot drift apart. PERIOD must divide 24 hours
+    ///      evenly: the division rounds down silently, which would shorten the
+    ///      lookback to less than 24h.
+    uint256 public constant SLOTS = 24 hours / PERIOD + 2;
 
     struct Observation {
         uint256 priceCumulative;
@@ -95,10 +98,11 @@ contract XenovaTwapOracle is IPriceOracle {
         updatedAt = observations[head].timestamp;
 
         // Cold start: a new token has no history. Report no drop until the
-        // buffer reaches back a full 24h plus the 30 minutes before it.
+        // buffer reaches back a full 24h plus the 10 minutes before it.
         if (count < SLOTS) return (0, updatedAt);
 
-        // The "24 hours ago" window: a completed 30-minute span, 48-49 slots back.
+        // The "24 hours ago" window: a completed 10-minute span, 144-145 slots
+        // back.
         Observation memory thenStart = observations[(head + 1) % SLOTS];
         Observation memory thenEnd = observations[(head + 2) % SLOTS];
 

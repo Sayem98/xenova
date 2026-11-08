@@ -34,7 +34,7 @@ async function main() {
   }
 
   // An oracle started on an empty pool records observations of a price that does
-  // not exist yet, and those junk readings stay in the ring buffer for 25 hours.
+  // not exist yet, and those junk readings stay in the ring buffer for a day.
   const pair = await ethers.getContractAt("IPancakePair", pairAddress);
   const [reserve0, reserve1] = await pair.getReserves();
   if (reserve0 === 0n || reserve1 === 0n) {
@@ -79,14 +79,20 @@ async function main() {
     `  npx hardhat verify --network ${network.name} ${oracleAddress} ` +
       `"${pairAddress}" "${tokenAddress}"`
   );
+  // The constructor records the first observation, so the buffer is full after
+  // SLOTS - 1 more periods.
+  const slots = await oracle.SLOTS();
+  const warmupMinutes = ((slots - 1n) * (await oracle.PERIOD())) / 60n;
+  const warmup = `~${warmupMinutes / 60n}h${warmupMinutes % 60n}m`;
+
   console.log("");
   console.log(
     "Next: start the keeper now — it does not wait on setOracle. Until it has"
   );
   console.log(
-    "filled 50 slots (~25h) the oracle reports a 0% drop and the sell tax sits"
+    `filled ${slots} slots (${warmup}) the oracle reports a 0% drop and the sell`
   );
-  console.log("at its 3% floor.");
+  console.log("tax sits at its 3% floor.");
   console.log(
     `  ORACLE_ADDRESS=${oracleAddress} npx hardhat run scripts/keeper.ts --network ${network.name}`
   );

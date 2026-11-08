@@ -115,7 +115,7 @@ and USDT addresses per network, plus the owner address, live in
 
 > **Deploying to mainnet? Read
 > [how_to_deploy_on_mainnet.md](how_to_deploy_on_mainnet.md) first.** It covers
-> the irreversible decisions, real gas costs, and the ~25-hour oracle cold start
+> the irreversible decisions, real gas costs, and the ~24-hour oracle cold start
 > that must be waited out *before* announcing the token.
 
 Launch is four steps, in this order. The owner key never goes into `.env`: run
@@ -153,20 +153,23 @@ Step 4 runs forever, so it needs a host that is not your laptop.
 
 Step 4 is not optional. The oracle only records a price when someone calls
 `update()`, and nothing on chain does that by itself. Until the ring buffer holds
-50 observations (~25 hours) `get24hPriceDropBps()` returns `0` and **the sell tax
-stays at its 3% floor** — the dynamic tax never activates. Budget roughly 48
-recorded updates a day at 106,400 gas each: about 0.00026 BNB/day at 0.05 gwei,
-0.005 BNB/day at 1 gwei.
+146 observations, one every 10 minutes (~24 hours), `get24hPriceDropBps()`
+returns `0` and **the sell tax stays at its 3% floor** — the dynamic tax never
+activates. Budget roughly 144 recorded updates a day at up to 106,400 gas each
+(about half that once the buffer has wrapped, after the first day): up to
+0.00077 BNB/day at 0.05 gwei, 0.015 BNB/day at 1 gwei.
 
-The keeper polls every 5 minutes, not every 30. `get24hPriceDropBps()` looks back
-48 observations rather than 24 hours, so the two only agree while observations
-land 30 minutes apart — and at a 30-minute poll, a tick arriving seconds early is
-refused and slips a full period, widening that window for good. Polling faster
-costs nothing: a refused call reverts during gas estimation and never becomes a
-transaction.
+The keeper does not poll on a fixed timer. `get24hPriceDropBps()` looks back 144
+observations rather than 24 hours, so the two only agree while observations land
+10 minutes apart. A fixed poll is late by up to one interval every time — a tick
+a second early is refused and has to wait for the next — and the delays add up:
+polling every 5 minutes would stretch "24h ago" to as much as 36 hours. Instead
+the keeper reads when the last observation was taken and sleeps until 3 seconds
+after the next one is allowed, which keeps observations ~602 s apart and the
+lookback at about 24h05m.
 
 `scripts/deployOracle.ts` refuses to run against a pair with zero reserves, since
-an oracle started on an empty pool records 25 hours of meaningless observations.
+an oracle started on an empty pool records a day of meaningless observations.
 
 Both deploy scripts print a ready-to-paste verify line. Verification uses
 `BSCSCAN_API_KEY`:
@@ -206,7 +209,7 @@ Set `OWNER_ADDRESS` to a throwaway address so the production key never has to si
 in a `.env`. Deploying to **mainnet** with `OWNER_ADDRESS` set to anything other
 than the real owner is refused outright.
 
-The TWAP oracle needs ~25 hours of history before it reports a real drop, which
+The TWAP oracle needs ~24 hours of history before it reports a real drop, which
 makes the tax tiers untestable in one sitting. `scripts/mockOracle.ts` points the
 token at a `MockPriceOracle` whose drop you set directly, so every tier can be
 exercised in minutes:
@@ -280,10 +283,13 @@ a redeploy, since the tier curve is a `pure` function with a hardcoded cap.
 
 Settled 2026-08-15 — see [implementation_plan.md](implementation_plan.md) §0.
 
-*   **Price source:** on-chain TWAP comparing a 30-minute average now against a
-    30-minute average from 24 hours ago. This matches the 24h change figure shown
+*   **Price source:** on-chain TWAP comparing a 10-minute average now against a
+    10-minute average from 24 hours ago. This matches the 24h change figure shown
     on DEX charts, which is what the spec calls for. Comparing against a 24-hour
-    *average* would read −1% where the chart reads −20%.
+    *average* would read −1% where the chart reads −20%. The period was 30
+    minutes until 2026-11-08; it was cut to 10 so the sell tax reacts to a crash
+    within ~20 minutes instead of ~60, at the cost of a price only having to be
+    held for 10 minutes to fool the oracle.
 *   **Oracle safety:** the token wraps every oracle call in `try/catch`, clamps
     the result, and falls back to the 3% floor if the reading is stale. A failing
     or dead oracle can never freeze transfers or exceed the cap.

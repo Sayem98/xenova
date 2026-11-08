@@ -13,10 +13,10 @@ of the decisions below cannot be undone after the deploy transaction confirms.
 
 ---
 
-## 0. Read this first: the launch has a 25-hour blind spot
+## 0. Read this first: the launch has a 24-hour blind spot
 
-The sell tax is driven by a TWAP oracle that needs **50 observations, one every
-30 minutes — about 25 hours** — before it can report a real 24h price drop.
+The sell tax is driven by a TWAP oracle that needs **146 observations, one every
+10 minutes — about 24 hours** — before it can report a real 24h price drop.
 Until then `get24hPriceDropBps()` returns `0` and **every sell is taxed at the 3%
 floor**, no matter how far the price falls.
 
@@ -24,13 +24,14 @@ This is correct, deliberate behaviour (a cold or dead oracle must never freeze
 trading), but it means a naive launch runs for a full day with no dynamic tax at
 all.
 
-**Do this instead:** add liquidity, start the oracle and keeper, then wait ~25
+**Do this instead:** add liquidity, start the oracle and keeper, then wait ~24
 hours *before* announcing the token or driving any volume to it. Confirm with
 `scripts/status.ts` that `history` has left cold start — it reads
-`50 updates recorded`, not `12 / 50 — cold start`. Only then go public.
+`146 updates recorded` (or more), not `12 / 146 — cold start`. Only then go
+public.
 
 ```
-deploy → verify → liquidity → oracle → keeper → [WAIT ~25h] → announce
+deploy → verify → liquidity → oracle → keeper → [WAIT ~24h] → announce
 ```
 
 **Who signs what.** The owner key never goes into `.env` or onto the developer's
@@ -44,7 +45,7 @@ Write Contract tab:
 | Approve Xenova, approve USDT, `addLiquidity` | **Client, owner wallet, on BscScan** |
 | Deploy oracle, verify | Developer's key |
 | `setOracle` | **Client, owner wallet, on BscScan** |
-| Keeper `update()` every 30 min | Keeper hot wallet |
+| Keeper `update()` every 10 min | Keeper hot wallet |
 
 ## 1. What you cannot change afterwards
 
@@ -116,8 +117,10 @@ operations** and the developer's deploy wallet with **~0.02 BNB**, both well
 clear of any realistic spike. The liquidity itself is USDT and costs no BNB
 beyond gas.
 
-Ongoing: the keeper spends 106,400 gas per update, 48 times a day —
-**0.00026 BNB/day (~0.008 BNB/month)** at 0.05 gwei, ~0.015 BNB/day at 3 gwei.
+Ongoing: the keeper spends up to 106,400 gas per update, 144 times a day —
+**up to 0.00077 BNB/day (~0.023 BNB/month)** at 0.05 gwei, ~0.046 BNB/day at
+3 gwei. That is the first-day figure, while every update writes a fresh slot;
+once the buffer wraps each update overwrites one and costs about half.
 
 ## 4. Configure
 
@@ -231,7 +234,7 @@ passes, re-run the script for a fresh one. Then confirm the reserves with
 ## 7. Oracle and keeper
 
 Only now, with the pool funded — the script refuses to run against zero reserves,
-because an oracle started on an empty pool records 25 hours of meaningless data.
+because an oracle started on an empty pool records a day of meaningless data.
 
 ```bash
 TOKEN_ADDRESS=0x… npx hardhat run scripts/deployOracle.ts --network bsc
@@ -250,7 +253,7 @@ Contract tab with the owner wallet. Until then the token ignores the oracle and
 every sell is taxed at 3%; `status.ts` shows `oracle → (none set)`.
 
 **Developer** starts the keeper straight away — it calls the oracle directly and
-does not wait on `setOracle`, so the ~25-hour cold start begins now rather than
+does not wait on `setOracle`, so the ~24-hour cold start begins now rather than
 whenever the client signs. **Leave it running permanently**:
 
 ```bash
@@ -265,25 +268,28 @@ a restart policy). Do not run it from a laptop.
 [deploy/README.md](deploy/README.md) is that setup for an Ubuntu VM, start to
 finish — systemd unit, the throwaway keeper wallet, and the reboot test.
 
-### Why it polls every 5 minutes
+### Why it wakes on a timer instead of polling
 
-The keeper wakes every 5 minutes, but the oracle only accepts an update every 30.
-Five ticks in six are refused, and that is the intended design — not a
-misconfiguration to correct.
+`get24hPriceDropBps()` looks back **144 observations**, not 24 hours. The two only
+mean the same thing while observations land 10 minutes apart, and every second
+an update lands late stretches the lookback for good.
 
-`get24hPriceDropBps()` looks back **48 observations**, not 24 hours. The two only
-mean the same thing while observations land 30 minutes apart. Polling at exactly
-30 minutes made that fragile: a tick arriving seconds early is refused, and that
-observation slips a full period late, widening the lookback window permanently.
-Six such slips in a day and the contract is comparing against a price 27 hours
-ago while the tax tiers still call it 24.
+A fixed poll is late by up to one interval every time: a tick arriving a second
+before the 10-minute mark is refused and has to wait for the next tick. Polling
+every 5 minutes would put observations 10–15 minutes apart, so "24h ago" could
+really mean 36 hours ago while the tax tiers still call it 24.
 
-Polling faster costs almost nothing. A refused call reverts during gas estimation
-and never becomes a transaction, so it spends an RPC call, not gas. The budgeted
-48 recorded updates a day in §3 are unchanged.
+So the keeper does not poll. It reads the block time of the last observation and
+sleeps until 3 seconds after the next update is allowed. Observations land ~602
+seconds apart and the lookback stays at about 24h05m. If an update is refused
+anyway (an RPC lagging behind the chain), it retries after 5 seconds; a refused
+call reverts during gas estimation and never becomes a transaction, so it spends
+an RPC call, not gas.
 
-The log is quiet by design: refused ticks print nothing, so **one line every
-30 minutes is a healthy keeper** and a gap is worth investigating.
+The log is quiet by design: only recorded updates print, so **one line every
+10 minutes is a healthy keeper** and a gap is worth investigating. The banner
+also prints when the next update is due (`next in 412s`), so a restart can be
+checked without waiting.
 
 ### If the keeper stops
 
@@ -310,27 +316,30 @@ yesterday's run:
 oracle
   address              0x…
   type                 XenovaTwapOracle
-  history              144 updates recorded
-  last update          12 min ago
-  keeper               ok — records every 30 min
+  history              432 updates recorded
+  last update          4 min ago
+  keeper               ok — records every 10 min
 ```
 
 | `keeper` line | Meaning |
 | --- | --- |
-| `ok` | Recorded within the last 40 minutes. Nothing to do. |
+| `ok` | Recorded within the last 15 minutes. Nothing to do. |
 | `late — missed a window` | Still using real prices, but at least one update was skipped. Check the keeper log and its BNB balance. |
 | `DEAD — past the 120 min window` | The token is reading 0% drop and every sell is at the 3% floor. Restart the keeper. |
 
 The age is measured against **block time, not your machine's clock**, so it is
 the same number the token's staleness check sees on chain. During the first
-~25 hours `history` reads `12 / 50 — cold start` instead, which is the other
+~24 hours `history` reads `12 / 146 — cold start` instead, which is the other
 reason a 0% drop is expected (§0).
 
 Two ways to remove the manual step later, neither required for launch: alert when
 that number stops moving, or run a **second keeper** on a different provider with
-a different key. The second keeper does not double gas — whichever loses the race
-is refused during gas estimation and never broadcasts — so it costs hosting and a
-second funded wallet, nothing more.
+a different key. Two copies of the current keeper would wake in the same second,
+both pass gas estimation, and the loser's transaction would revert on chain and
+still pay gas — so a backup keeper first needs to wake later than the primary
+(e.g. a minute after each update is due), which `scripts/keeper.ts` does not
+support yet. Set up that way, the backup only sends when the primary has missed,
+and costs hosting and a second funded wallet, nothing more.
 
 ## 8. Wait, then verify before announcing
 
@@ -342,8 +351,9 @@ TOKEN_ADDRESS=0x… npx hardhat run scripts/status.ts --network bsc
 
 Go public only when it shows:
 
-- `history` reading `50 updates recorded` — no `cold start` left in the line
-- `keeper` reading `ok`, and `last update` under 40 minutes
+- `history` reading `146 updates recorded` or more — no `cold start` left in the
+  line
+- `keeper` reading `ok`, and `last update` under 15 minutes
 - `oracle → type: XenovaTwapOracle` (not a mock, not `(none set)`)
 - pair reserves as expected
 - `sell tax now` responding to real price movement
