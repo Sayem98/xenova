@@ -7,14 +7,16 @@ import { addressesFor, pairFor } from "./addresses";
 ///   TOKEN_ADDRESS=0x… npx hardhat run scripts/deployOracle.ts --network bsc
 ///
 /// Deploys the TWAP oracle against the live pair and points the token at it.
-/// setOracle is onlyOwner, so the signer here must be the owner wallet.
+/// Any funded key can deploy the oracle. setOracle is onlyOwner, so if the
+/// signer is not the owner it is printed as a BscScan step for the owner to sign
+/// instead — that is how mainnet is done, with the owner key never in .env.
 async function main() {
   const tokenAddress = process.env.TOKEN_ADDRESS;
   if (!tokenAddress || !ethers.isAddress(tokenAddress)) {
     throw new Error("Set TOKEN_ADDRESS to the deployed Xenova address.");
   }
 
-  const { router, usdt } = addressesFor(network.name);
+  const { router, usdt, explorer } = addressesFor(network.name);
 
   const [signer] = await ethers.getSigners();
   if (!signer) {
@@ -24,12 +26,7 @@ async function main() {
   const token = await ethers.getContractAt("Xenova", tokenAddress);
 
   const owner = await token.owner();
-  if (owner.toLowerCase() !== signer.address.toLowerCase()) {
-    throw new Error(
-      `setOracle is onlyOwner. Token owner is ${owner} but the signer is ` +
-        `${signer.address}. Set DEPLOYER_PRIVATE_KEY to the owner's key.`
-    );
-  }
+  const isOwner = owner.toLowerCase() === signer.address.toLowerCase();
 
   const pairAddress = await pairFor(ethers, router, tokenAddress, usdt);
   if (pairAddress === ethers.ZeroAddress) {
@@ -61,10 +58,21 @@ async function main() {
 
   console.log(`oracle       ${oracleAddress}`);
 
-  const tx = await token.setOracle(oracleAddress);
-  await tx.wait();
-  console.log(`setOracle    ${tx.hash}`);
-  console.log(`token.oracle ${await token.oracle()}`);
+  if (isOwner) {
+    const tx = await token.setOracle(oracleAddress);
+    await tx.wait();
+    console.log(`setOracle    ${tx.hash}`);
+    console.log(`token.oracle ${await token.oracle()}`);
+  } else {
+    console.log("");
+    console.log(`The signer ${signer.address} is not the owner, so setOracle was`);
+    console.log(`not sent. Owner (${owner}): sign it on BscScan`);
+    console.log('with "Connect to Web3", then Write:');
+    console.log(`  ${explorer}/address/${tokenAddress}#writeContract`);
+    console.log("  setOracle");
+    console.log(`    oracle_  ${oracleAddress}`);
+    console.log("Until it is signed the token ignores the oracle and taxes sells at 3%.");
+  }
   console.log("");
   console.log("Verify with:");
   console.log(
@@ -73,9 +81,12 @@ async function main() {
   );
   console.log("");
   console.log(
-    "Next: start the keeper. Until it has filled 50 slots (~25h) the oracle"
+    "Next: start the keeper now — it does not wait on setOracle. Until it has"
   );
-  console.log("reports a 0% drop and the sell tax sits at its 3% floor.");
+  console.log(
+    "filled 50 slots (~25h) the oracle reports a 0% drop and the sell tax sits"
+  );
+  console.log("at its 3% floor.");
   console.log(
     `  ORACLE_ADDRESS=${oracleAddress} npx hardhat run scripts/keeper.ts --network ${network.name}`
   );

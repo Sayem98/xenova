@@ -30,8 +30,8 @@ This project involves developing a BEP20 token smart contract with a fixed buy t
 *   **Token Symbol:** Xenova
 *   **Total Supply:** 210,000,000 (210 Million)
 *   **Decimals:** 18
-*   **Owner / initial holder:** `0xe7c237447CB352B67bCf53EcF4197e4549e33fd5`
-*   **USDT Tax Receiver Wallet:** same as the owner, above
+*   **Owner / initial holder:** `0x7311E273393d737C82FB050e914320C7919BeAEB`
+*   **USDT Tax Receiver Wallet:** `0x7b72d56e4Fdcf07eFa149d7512161419732f2D58`
 
 > Ownership and the full supply are assigned in the deploy transaction through
 > the `initialOwner_` constructor argument, so the deploy key never holds either.

@@ -3,7 +3,7 @@
 
 /// Receives ownership and the full 210,000,000 supply in the deploy
 /// transaction.
-export const MAINNET_OWNER = "0xe7c237447CB352B67bCf53EcF4197e4549e33fd5";
+export const MAINNET_OWNER = "0x7311E273393d737C82FB050e914320C7919BeAEB";
 
 /// Overridable so a testnet rehearsal can be owned by a throwaway key, which
 /// keeps the production key off this machine entirely. `assertOwnerAllowed`
@@ -14,7 +14,7 @@ export const OWNER = process.env.OWNER_ADDRESS || MAINNET_OWNER;
 /// constructor bakes this in, so getting it wrong costs a redeploy or a
 /// setTaxReceiver call after the fact.
 export const MAINNET_TAX_RECEIVER =
-  "0xc8Ba81002d9bf5229E6388c5320B37a7b2bd939A";
+  "0x7b72d56e4Fdcf07eFa149d7512161419732f2D58";
 
 /// Overridable so a testnet rehearsal can pay a throwaway wallet you control.
 /// `assertTaxReceiverAllowed` below stops the override applying on mainnet.
@@ -23,6 +23,8 @@ export const TAX_RECEIVER = process.env.TAX_RECEIVER || MAINNET_TAX_RECEIVER;
 export interface NetworkAddresses {
   router: string;
   usdt: string;
+  /// Where the owner signs the steps the scripts cannot sign for it.
+  explorer: string;
 }
 
 /// Verified mainnet addresses — see README "On-Chain Addresses".
@@ -31,6 +33,7 @@ export const ADDRESSES: Record<string, NetworkAddresses> = {
   bsc: {
     router: "0x10ED43C718714eb63d5aA57B78B54704E256024E",
     usdt: "0x55d398326f99059fF775485246999027B3197955",
+    explorer: "https://bscscan.com",
   },
   bscTestnet: {
     router: "0xD99D1c33F9fC3444f8101754aBC46c52416550D1",
@@ -41,6 +44,7 @@ export const ADDRESSES: Record<string, NetworkAddresses> = {
     usdt:
       process.env.TESTNET_USDT ||
       "0x7ef95a0FEE0Dd31b22626fA2e10Ee6A223F8a684",
+    explorer: "https://testnet.bscscan.com",
   },
 };
 

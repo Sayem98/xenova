@@ -6,7 +6,7 @@ of the decisions below cannot be undone after the deploy transaction confirms.
 | | |
 | --- | --- |
 | Token | Xenova (`Xenova`), 210,000,000, 18 decimals |
-| Owner | `0xe7c237447CB352B67bCf53EcF4197e4549e33fd5` |
+| Owner | `0x7311E273393d737C82FB050e914320C7919BeAEB` |
 | Chain | BNB Smart Chain, chainId 56 |
 | Router | PancakeSwap V2 `0x10ED43C718714eb63d5aA57B78B54704E256024E` |
 | USDT | `0x55d398326f99059fF775485246999027B3197955` (18 decimals) |
@@ -33,6 +33,19 @@ hours *before* announcing the token or driving any volume to it. Confirm with
 deploy → verify → liquidity → oracle → keeper → [WAIT ~25h] → announce
 ```
 
+**Who signs what.** The owner key never goes into `.env` or onto the developer's
+machine. The developer deploys both contracts from their own key; the scripts
+then print the owner-only transactions, and the client signs those on BscScan's
+Write Contract tab:
+
+| Step | Signed by |
+| --- | --- |
+| Deploy token, verify | Developer's key |
+| Approve Xenova, approve USDT, `addLiquidity` | **Client, owner wallet, on BscScan** |
+| Deploy oracle, verify | Developer's key |
+| `setOracle` | **Client, owner wallet, on BscScan** |
+| Keeper `update()` every 30 min | Keeper hot wallet |
+
 ## 1. What you cannot change afterwards
 
 The constructor is final. There is no upgrade path, no proxy, no setter for any
@@ -53,18 +66,18 @@ the swap-back threshold, AMM pair registrations, and fee exclusions.
 
 ## 2. Prerequisites
 
-**The owner key.** `0xe7c2…3fd5` will hold the entire supply and all admin
+**The owner key.** `0x7311…eAEB` will hold the entire supply and all admin
 rights. Hold it on a hardware wallet. Confirm you can sign with it *before*
 deploy day — a lost key here means the supply is unrecoverable and the token is
 permanently unadministrable.
 
-> That address currently carries an EIP-7702 delegation on mainnet, so
-> `code.length > 0`. This is fine and expected — the contract has no "EOA only"
-> guard anywhere, deliberately. Plain ERC-20 transfers to it work normally.
+> As of 2026-10-06 that address is a plain EOA that has never sent a
+> transaction (nonce 0). Sending one small transaction from it before deploy day
+> is the simplest proof that the key works.
 
-**Fund the owner with BNB for gas.** As of writing it holds **0.00000108 BNB**
-— not enough for a single transaction. Gas only: the pool is seeded with USDT,
-not BNB.
+**Fund the owner with BNB for gas.** As of 2026-10-06 it holds **0 BNB** — not
+enough for a single transaction. Gas only: the pool is seeded with USDT, not
+BNB.
 
 **Fund the owner with USDT.** The pair is Xenova/USDT, so the owner wallet must
 hold the full `LP_USDT` amount before §6. Mainnet USDT is
@@ -73,7 +86,7 @@ hold the full `LP_USDT` amount before §6. Mainnet USDT is
 **Decide the liquidity.** `LP_TOKENS` and `LP_USDT` have no defaults on mainnet;
 the script refuses to run without both, on purpose.
 
-**The tax receiver** is `0xc8Ba…939A`, hardcoded in `scripts/addresses.ts`.
+**The tax receiver** is `0x7b72…2D58`, hardcoded in `scripts/addresses.ts`.
 Nothing to decide, and nothing to set in `.env`.
 
 **Have the keeper host ready before you start.** See §7 — the token's headline
@@ -88,19 +101,20 @@ command away the moment the oracle exists.
 Measured on a mainnet fork at real contract sizes. BNB figures at **0.05 gwei**,
 the gas price observed at the time of writing:
 
-| Step | Gas | BNB @ 0.05 gwei | BNB @ 3 gwei |
-| --- | --- | --- | --- |
-| Deploy Xenova | 4,683,702 | 0.000234 | 0.0141 |
-| `approve` | 46,423 | 0.000002 | 0.0001 |
-| `approve` (USDT) | 46,423 | 0.000002 | 0.0001 |
-| `addLiquidity` | 257,488 | 0.000013 | 0.0008 |
-| Deploy oracle | 680,786 | 0.000034 | 0.0020 |
-| `setOracle` | 47,267 | 0.000002 | 0.0001 |
-| **Total one-time** | **5,715,666** | **0.00029** | **0.0171** |
+| Step | Paid by | Gas | BNB @ 0.05 gwei | BNB @ 3 gwei |
+| --- | --- | --- | --- | --- |
+| Deploy Xenova | Developer | 4,683,702 | 0.000234 | 0.0141 |
+| `approve` | Owner | 46,423 | 0.000002 | 0.0001 |
+| `approve` (USDT) | Owner | 46,423 | 0.000002 | 0.0001 |
+| `addLiquidity` | Owner | 257,488 | 0.000013 | 0.0008 |
+| Deploy oracle | Developer | 680,786 | 0.000034 | 0.0020 |
+| `setOracle` | Owner | 47,267 | 0.000002 | 0.0001 |
+| **Total one-time** | | **5,715,666** | **0.00029** | **0.0171** |
 
 Gas is cheap right now but can spike. **Fund the owner with ~0.05 BNB for
-operations**, well clear of any realistic spike. The liquidity itself is USDT and
-costs no BNB beyond gas.
+operations** and the developer's deploy wallet with **~0.02 BNB**, both well
+clear of any realistic spike. The liquidity itself is USDT and costs no BNB
+beyond gas.
 
 Ongoing: the keeper spends 106,400 gas per update, 48 times a day —
 **0.00026 BNB/day (~0.008 BNB/month)** at 0.05 gwei, ~0.015 BNB/day at 3 gwei.
@@ -114,16 +128,20 @@ cp .env.sample .env
 Set in `.env`:
 
 ```bash
-DEPLOYER_PRIVATE_KEY=<the owner key>
+DEPLOYER_PRIVATE_KEY=<the developer's deploy key — never the owner key>
 BSCSCAN_API_KEY=<your key>
 LP_TOKENS=<decided in §2>
 LP_USDT=<decided in §2>
 # TAX_RECEIVER=   # leave blank; the receiver is in scripts/addresses.ts
 ```
 
+The deploy key only pays gas. Ownership and the full supply go to the owner in
+the deploy transaction itself, and the deploy key ends up holding nothing and
+controlling nothing.
+
 **Leave `OWNER_ADDRESS` and `TAX_RECEIVER` blank.** Both exist only for testnet
 rehearsals. On mainnet, setting either to anything other than the real address
-(`0xe7c2…3fd5` and `0xc8Ba…939A`) makes the deploy script refuse to run — those
+(`0x7311…eAEB` and `0x7b72…2D58`) makes the deploy script refuse to run — those
 guards are what stop 210,000,000 tokens, and every future tax payment, going to
 the wrong address.
 
@@ -131,7 +149,7 @@ Then confirm the build is clean before touching the network:
 
 ```bash
 npx hardhat clean && yarn compile
-yarn test        # 36 passing
+yarn test        # 37 passing
 yarn test:fork   # 6 passing, against real PancakeSwap and USDT
 ```
 
@@ -150,15 +168,16 @@ It then reads the state back from the chain — rather than echoing the argument
 it just sent — and prints the token address, the pair address it created, name,
 symbol, total supply, owner, and the owner's balance.
 
-**Verify immediately** — before liquidity, so holders never see an unverified
-contract:
+**Verify immediately** — before liquidity. Besides holders never seeing an
+unverified contract, BscScan only shows the Write Contract tab the client signs
+on in §6 and §7 for a verified contract:
 
 ```bash
 npx hardhat verify --network bsc <TOKEN_ADDRESS> \
   "0x10ED43C718714eb63d5aA57B78B54704E256024E" \
   "0x55d398326f99059fF775485246999027B3197955" \
   "<TAX_RECEIVER>" \
-  "0xe7c237447CB352B67bCf53EcF4197e4549e33fd5"
+  "0x7311E273393d737C82FB050e914320C7919BeAEB"
 ```
 
 The script prints this line filled in for you. Check on BscScan that the decoded
@@ -170,7 +189,7 @@ constructor arguments show the correct owner.
 TOKEN_ADDRESS=0x… npx hardhat run scripts/status.ts --network bsc
 ```
 
-Confirm: `Xenova / Xenova`, `210000000`, owner is `0xe7c2…3fd5` holding the full
+Confirm: `Xenova / Xenova`, `210000000`, owner is `0x7311…eAEB` holding the full
 supply, and the deploy wallet holds nothing.
 
 ## 6. Add liquidity
@@ -178,14 +197,31 @@ supply, and the deploy wallet holds nothing.
 Must be signed by the owner — it holds the supply and is the only fee-excluded
 address. That exclusion is what stops the liquidity add being taxed as a sell.
 
+**Client first:** the owner wallet must already hold the `LP_USDT` amount and
+some BNB for gas.
+
+**Developer** runs:
+
 ```bash
 TOKEN_ADDRESS=0x… npx hardhat run scripts/addLiquidity.ts --network bsc
 ```
 
-The script checks the signer is the owner, that balances cover `LP_TOKENS` and
-`LP_USDT`, and that the owner is fee-excluded, before sending anything. It sends
-two approvals — Xenova and USDT — then one `addLiquidity`, and prints the
-resulting reserves.
+The script checks that the pool is still empty, that the **owner's** balances
+cover `LP_TOKENS`, `LP_USDT` and gas, and that the owner is fee-excluded. Because
+the signer is not the owner it sends nothing, and instead prints three
+transactions with every field filled in.
+
+**Client** signs them on BscScan with the owner wallet, in order, each confirmed
+before the next — "Connect to Web3" on each page, paste the values exactly:
+
+1. `approve` on the Xenova token — the router, `LP_TOKENS` in wei
+2. `approve` on USDT — the router, `LP_USDT` in wei
+3. `addLiquidity` on the PancakeSwap router — eight fields, all printed
+
+Amounts are raw 18-decimal integers; paste them as printed, do not use BscScan's
+decimal helper. The `deadline` is 24 hours from when the script ran — if it
+passes, re-run the script for a fresh one. Then confirm the reserves with
+`scripts/status.ts`.
 
 > The initial price is set entirely by your ratio, and because the other side is
 > USDT it is now a dollar price directly. 1,000,000 Xenova against 10,000 USDT
@@ -201,14 +237,21 @@ because an oracle started on an empty pool records 25 hours of meaningless data.
 TOKEN_ADDRESS=0x… npx hardhat run scripts/deployOracle.ts --network bsc
 ```
 
-This deploys `XenovaTwapOracle` against the live pair and calls `setOracle`.
-Owner-signed. Verify it too:
+**Developer** runs this. It deploys `XenovaTwapOracle` against the live pair
+from the developer's key, then prints the one owner-only step. Verify the oracle
+too:
 
 ```bash
 npx hardhat verify --network bsc <ORACLE_ADDRESS> "<PAIR_ADDRESS>" "<TOKEN_ADDRESS>"
 ```
 
-Then start the keeper and **leave it running permanently**:
+**Client** signs `setOracle(<ORACLE_ADDRESS>)` on the token's BscScan Write
+Contract tab with the owner wallet. Until then the token ignores the oracle and
+every sell is taxed at 3%; `status.ts` shows `oracle → (none set)`.
+
+**Developer** starts the keeper straight away — it calls the oracle directly and
+does not wait on `setOracle`, so the ~25-hour cold start begins now rather than
+whenever the client signs. **Leave it running permanently**:
 
 ```bash
 ORACLE_ADDRESS=0x… npx hardhat run scripts/keeper.ts --network bsc

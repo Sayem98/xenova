@@ -16,8 +16,8 @@ forwarded to a tax receiver wallet.
 | Name / symbol | Xenova (`Xenova`) |
 | Total supply | 210,000,000 |
 | Decimals | 18 |
-| Owner / initial holder | `0xe7c237447CB352B67bCf53EcF4197e4549e33fd5` |
-| Tax receiver | `0xc8Ba81002d9bf5229E6388c5320B37a7b2bd939A` |
+| Owner / initial holder | `0x7311E273393d737C82FB050e914320C7919BeAEB` |
+| Tax receiver | `0x7b72d56e4Fdcf07eFa149d7512161419732f2D58` |
 | Buy tax | 3% (fixed) |
 | Sell tax | 3% → 60%, based on the 24h price drop |
 | Trading pair | Xenova/USDT on PancakeSwap V2 |
@@ -118,21 +118,23 @@ and USDT addresses per network, plus the owner address, live in
 > the irreversible decisions, real gas costs, and the ~25-hour oracle cold start
 > that must be waited out *before* announcing the token.
 
-Launch is four steps, in this order. Every script signed by the owner checks
-`token.owner()` against the signer first and exits with a clear message rather
-than a raw `OwnableUnauthorizedAccount`.
+Launch is four steps, in this order. The owner key never goes into `.env`: run
+the scripts with the developer's key, and wherever the owner must sign they send
+nothing and print the exact transactions — every field filled in — for the owner
+to sign on BscScan's Write Contract tab.
 
 ```bash
 # 1. Deploy the token. Supply and ownership go straight to the owner wallet.
-#    It creates its own Xenova/USDT pair in the constructor.
+#    It creates its own Xenova/USDT pair in the constructor. Any funded key.
 npx hardhat run scripts/deploy.ts --network bsc
 
 # 2. Seed the pool with Xenova AND USDT, both from the owner wallet. Owner-signed:
 #    it holds the supply and is the only fee-excluded address, which is what
-#    keeps the add from being taxed.
+#    keeps the add from being taxed. Prints two approvals and addLiquidity.
 TOKEN_ADDRESS=0x… LP_TOKENS=… LP_USDT=… npx hardhat run scripts/addLiquidity.ts --network bsc
 
-# 3. Deploy the TWAP oracle and point the token at it. Owner-signed.
+# 3. Deploy the TWAP oracle (any funded key), then point the token at it —
+#    setOracle is owner-signed, so it is printed for BscScan.
 TOKEN_ADDRESS=0x… npx hardhat run scripts/deployOracle.ts --network bsc
 
 # 4. Start the keeper and leave it running. Any funded key will do.
@@ -285,7 +287,7 @@ Settled 2026-08-15 — see [implementation_plan.md](implementation_plan.md) §0.
 *   **Oracle safety:** the token wraps every oracle call in `try/catch`, clamps
     the result, and falls back to the 3% floor if the reading is stale. A failing
     or dead oracle can never freeze transfers or exceed the cap.
-*   **Admin:** a plain owner key, `0xe7c237447CB352B67bCf53EcF4197e4549e33fd5`.
+*   **Admin:** a plain owner key, `0x7311E273393d737C82FB050e914320C7919BeAEB`.
     `setOracle` and `setTaxReceiver` take effect immediately. Do **not** call
     `renounceOwnership()` — it permanently kills both setters and locks in
     whatever oracle is live at that moment.
